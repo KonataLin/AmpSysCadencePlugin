@@ -37,19 +37,20 @@ REPO_URL = "https://github.com/KonataLin/AmpSysCadencePlugin"
 ISSUES_URL = "https://github.com/KonataLin/AmpSysCadencePlugin/issues"
 SPONSOR_URL = "https://www.afdian.com/a/LocyDragon"
 
-BG = "#f5f7fb"
+BG = "#f6f8fc"
 PANEL = "#ffffff"
-PANEL_2 = "#eef3fb"
-INK = "#172033"
-MUTED = "#5e6f86"
-LINE = "#d6deea"
-CHART_BG = "#ffffff"
+PANEL_2 = "#edf4ff"
+INK = "#111827"
+MUTED = "#66758b"
+LINE = "#d8e1ee"
+CHART_BG = "#fbfdff"
 ACCENT = "#2563eb"
-ACCENT_2 = "#16a34a"
+ACCENT_2 = "#10b981"
+ACCENT_3 = "#f59e0b"
 WARN = "#b7791f"
 BAD = "#dc2626"
-FLOW_OK = "✓"
-FLOW_PENDING = "×"
+FLOW_OK = "\u2713"
+FLOW_PENDING = "\u00d7"
 
 FONT_CANDIDATES = (
     "Segoe UI",
@@ -469,6 +470,7 @@ class AmpSysGUI:
         self.last_points: List[Dict[str, Any]] = []
         self.flow_status_vars: Dict[str, tk.StringVar] = {}
         self.flow_status_labels: Dict[str, tk.Label] = {}
+        self.flow_tracker_labels: Dict[str, tk.Label] = {}
         self.runner_log_path: Optional[Path] = None
         self.build_started_at = 0.0
         self.scroll_canvases: List[tk.Canvas] = []
@@ -510,7 +512,7 @@ class AmpSysGUI:
                 tkfont.nametofont(name).configure(family=self.ui_font_family, size=size, weight=weight)
             except Exception:
                 pass
-        self.root.option_add("*Font", f"{self.ui_font_family} 11")
+        self.root.option_add("*Font", f"{{{self.ui_font_family}}} 11")
         self.root.configure(bg=BG)
         style = ttk.Style(self.root)
         try:
@@ -527,6 +529,7 @@ class AmpSysGUI:
         style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=self.font_normal)
         style.configure("Card.TLabel", background=PANEL, foreground=INK, font=self.font_normal)
         style.configure("MutedCard.TLabel", background=PANEL, foreground=MUTED, font=self.font_normal)
+        style.configure("Section.TLabel", background=PANEL, foreground=INK, font=self.font_section)
         style.configure("Link.TButton", background="#eaf2ff", foreground=ACCENT, borderwidth=1, padding=(12, 7), font=self.font_normal)
         style.map("Link.TButton", background=[("active", "#dbeafe")], foreground=[("active", ACCENT)])
         style.configure("TButton", background=PANEL_2, foreground=INK, borderwidth=1, focusthickness=0, padding=(14, 8), font=self.font_normal)
@@ -535,12 +538,12 @@ class AmpSysGUI:
         style.map("Accent.TButton", background=[("active", "#1d4ed8")])
         style.configure("Danger.TButton", background="#fee2e2", foreground=BAD, font=self.font_normal)
         style.map("Danger.TButton", background=[("active", "#fecaca")])
-        style.configure("TEntry", fieldbackground="#ffffff", foreground=INK, insertcolor=INK, bordercolor=LINE, padding=6, font=self.font_normal)
+        style.configure("TEntry", fieldbackground="#ffffff", foreground=INK, insertcolor=INK, bordercolor=LINE, padding=7, font=self.font_normal)
         style.configure("TCombobox", fieldbackground="#ffffff", foreground=INK, bordercolor=LINE, arrowcolor=INK, font=self.font_normal)
         style.configure("TCheckbutton", background=BG, foreground=INK, font=self.font_normal)
         style.configure("Card.TCheckbutton", background=PANEL, foreground=INK, font=self.font_normal)
         style.configure("Horizontal.TScale", background=PANEL)
-        style.configure("Treeview", background="#ffffff", foreground=INK, fieldbackground="#ffffff", bordercolor=LINE, rowheight=34, font=self.font_normal)
+        style.configure("Treeview", background="#ffffff", foreground=INK, fieldbackground="#ffffff", bordercolor=LINE, rowheight=32, font=self.font_normal)
         style.configure("Treeview.Heading", background=PANEL_2, foreground=INK, relief="flat", font=self.font_bold)
         style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", INK)])
         style.configure("Horizontal.TProgressbar", background=ACCENT_2, troughcolor="#e7edf6", bordercolor="#e7edf6", lightcolor=ACCENT_2, darkcolor=ACCENT_2)
@@ -581,29 +584,33 @@ class AmpSysGUI:
             self.root.after(10, self.parse_netlist_from_gui)
 
     def build_ui(self) -> None:
-        header = tk.Frame(self.root, bg=BG)
-        header.pack(fill="x", padx=20, pady=(16, 10))
-        header.grid_columnconfigure(0, weight=1)
-        header.grid_columnconfigure(1, weight=0)
+        header = tk.Frame(self.root, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
+        header.pack(fill="x", padx=22, pady=(18, 12))
+        header.grid_columnconfigure(1, weight=1)
+        header.grid_columnconfigure(2, weight=0)
 
-        title_box = tk.Frame(header, bg=BG)
-        title_box.grid(row=0, column=0, sticky="ew")
-        tk.Label(title_box, text="AmpSys", bg=BG, fg=INK, font=self.font_heading).grid(row=0, column=0, sticky="w")
+        tk.Frame(header, bg=ACCENT, width=5).grid(row=0, column=0, rowspan=2, sticky="nsw")
+        title_box = tk.Frame(header, bg=PANEL)
+        title_box.grid(row=0, column=1, rowspan=2, sticky="ew", padx=(18, 14), pady=14)
+        tk.Label(title_box, text="AmpSys", bg=PANEL, fg=INK, font=self.font_heading).grid(row=0, column=0, sticky="w")
         mode_text = "Windows LUT Builder" if self.can_build_library_here() else "Linux Cache-Only"
         tk.Label(title_box, text=mode_text, bg="#eaf2ff", fg=ACCENT, font=self.font_bold, padx=10, pady=4).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
-        tk.Label(title_box, text="Cadence schematic sizing cockpit", bg=BG, fg=MUTED, font=self.font_bold).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        tk.Label(title_box, text="Cadence schematic optimizer", bg=PANEL, fg=MUTED, font=self.font_bold).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        actions = tk.Frame(header, bg=BG)
-        actions.grid(row=0, column=1, sticky="e")
-        ttk.Button(actions, text="Repo", style="Link.TButton", command=lambda: self.open_url(REPO_URL)).pack(side="left", padx=(0, 6))
-        ttk.Button(actions, text="Issues", style="Link.TButton", command=lambda: self.open_url(ISSUES_URL)).pack(side="left", padx=6)
-        ttk.Button(actions, text="Sponsor", style="Link.TButton", command=lambda: self.open_url(SPONSOR_URL)).pack(side="left", padx=6)
-        ttk.Button(actions, text="Open Workspace", command=self.open_workspace).pack(side="left", padx=(12, 0))
+        actions = tk.Frame(header, bg=PANEL)
+        actions.grid(row=0, column=2, sticky="e", padx=(0, 16), pady=(14, 5))
+        ttk.Button(actions, text="Open Workspace", command=self.open_workspace).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Load Project", command=self.load_project_dialog).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Save Project", command=self.save_project).pack(side="left", padx=(8, 0))
 
+        links = tk.Frame(header, bg=PANEL)
+        links.grid(row=1, column=2, sticky="e", padx=(0, 16), pady=(0, 14))
+        ttk.Button(links, text="GitHub", style="Link.TButton", command=lambda: self.open_url(REPO_URL)).pack(side="left", padx=(0, 6))
+        ttk.Button(links, text="Issues", style="Link.TButton", command=lambda: self.open_url(ISSUES_URL)).pack(side="left", padx=6)
+        ttk.Button(links, text="Sponsor", style="Link.TButton", command=lambda: self.open_url(SPONSOR_URL)).pack(side="left", padx=6)
+
         body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=20, pady=(0, 18))
+        body.pack(fill="both", expand=True, padx=22, pady=(0, 18))
         self.main_page = self.add_scroll_page(body)
         self.root.bind_all("<MouseWheel>", self.on_mousewheel, add="+")
         self.root.bind_all("<Button-4>", self.on_mousewheel, add="+")
@@ -668,9 +675,13 @@ class AmpSysGUI:
         return frame
 
     def field(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, width: int = 20, browse: str = "") -> ttk.Entry:
-        ttk.Label(parent, text=label, style="MutedCard.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
-        ent = ttk.Entry(parent, textvariable=var, width=width)
-        ent.grid(row=row, column=col + 1, padx=(0, 6), pady=8, sticky="ew")
+        cell = ttk.Frame(parent, style="StepBody.TFrame")
+        span = 4 if width >= 40 and col == 0 else 2
+        cell.grid(row=row, column=col, columnspan=span, padx=(6, 8), pady=6, sticky="ew")
+        cell.grid_columnconfigure(0, weight=1)
+        ttk.Label(cell, text=label, style="MutedCard.TLabel").grid(row=0, column=0, columnspan=2, pady=(0, 3), sticky="w")
+        ent = ttk.Entry(cell, textvariable=var, width=width)
+        ent.grid(row=1, column=0, padx=(0, 6 if browse else 0), sticky="ew")
         if browse:
             def choose() -> None:
                 if browse == "dir":
@@ -679,13 +690,16 @@ class AmpSysGUI:
                     val = filedialog.askopenfilename(initialdir=str(Path(var.get() or ROOT).expanduser().parent))
                 if val:
                     var.set(val)
-            ttk.Button(parent, text="...", command=choose, width=3).grid(row=row, column=col + 2, padx=(0, 8), pady=8, sticky="w")
+            ttk.Button(cell, text="...", command=choose, width=3).grid(row=1, column=1, sticky="e")
         return ent
 
     def combo(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, values: Iterable[str], width: int = 16) -> ttk.Combobox:
-        ttk.Label(parent, text=label, style="MutedCard.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
-        cb = ttk.Combobox(parent, textvariable=var, values=list(values), width=width, state="readonly")
-        cb.grid(row=row, column=col + 1, padx=(0, 8), pady=8, sticky="ew")
+        cell = ttk.Frame(parent, style="StepBody.TFrame")
+        cell.grid(row=row, column=col, columnspan=2, padx=(6, 8), pady=6, sticky="ew")
+        cell.grid_columnconfigure(0, weight=1)
+        ttk.Label(cell, text=label, style="MutedCard.TLabel").grid(row=0, column=0, pady=(0, 3), sticky="w")
+        cb = ttk.Combobox(cell, textvariable=var, values=list(values), width=width, state="readonly")
+        cb.grid(row=1, column=0, sticky="ew")
         return cb
 
     def check(self, parent: tk.Widget, text: str, var: tk.Variable, row: int, col: int) -> ttk.Checkbutton:
@@ -694,24 +708,28 @@ class AmpSysGUI:
         return cb
 
     def flow_section(self, parent: tk.Widget, key: str, title: str, row: int) -> ttk.Frame:
-        frame = ttk.Frame(parent, style="Shell.TFrame", padding=(16, 14, 16, 14))
+        frame = ttk.Frame(parent, style="Shell.TFrame", padding=(18, 16, 18, 16))
         frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
-        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+        order = {"library": 1, "devices": 2, "specs": 3, "run": 4, "results": 5}.get(key, 0)
+        tk.Label(frame, text=f"{order:02d}", bg="#eaf2ff", fg=ACCENT, font=self.font_bold, padx=10, pady=5).grid(row=0, column=0, padx=(0, 12), sticky="n")
         status = tk.Label(frame, textvariable=self.flow_status_vars[key], width=3, bg="#fee2e2", fg=BAD, font=(self.ui_font_family, 13, "bold"), padx=4, pady=3)
-        status.grid(row=0, column=0, rowspan=2, padx=(0, 14), sticky="n")
+        status.grid(row=0, column=1, padx=(0, 14), sticky="n")
         self.flow_status_labels[key] = status
-        ttk.Label(frame, text=title, style="Card.TLabel", font=self.font_section).grid(row=0, column=1, sticky="w")
+        ttk.Label(frame, text=title, style="Section.TLabel").grid(row=0, column=2, sticky="w")
         content = ttk.Frame(frame, style="StepBody.TFrame")
-        content.grid(row=1, column=1, sticky="ew", pady=(10, 0))
-        for col in (1, 3, 5):
+        content.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        for col in (0, 2, 4):
             content.grid_columnconfigure(col, weight=1)
         return content
 
     def set_flow_status(self, key: str, ok: bool) -> None:
         if key in self.flow_status_vars:
             self.flow_status_vars[key].set(FLOW_OK if ok else FLOW_PENDING)
-        label = self.flow_status_labels.get(key)
-        if label:
+        labels = [self.flow_status_labels.get(key), self.flow_tracker_labels.get(key)]
+        for label in labels:
+            if not label:
+                continue
             if ok:
                 label.configure(bg="#dcfce7", fg="#15803d")
             else:
@@ -825,7 +843,7 @@ class AmpSysGUI:
         page.grid_columnconfigure(0, weight=1)
         self.flow_status_vars = {key: tk.StringVar(self.root, FLOW_PENDING) for key in ("library", "devices", "specs", "run", "results")}
 
-        flow = ttk.Frame(page, style="Shell.TFrame", padding=(16, 12, 16, 12))
+        flow = ttk.Frame(page, style="Shell.TFrame", padding=(18, 14, 18, 14))
         flow.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         flow_items = [
             ("library", "LUT Cache"),
@@ -834,9 +852,17 @@ class AmpSysGUI:
             ("run", "Run"),
             ("results", "Results"),
         ]
+        for col in range(len(flow_items)):
+            flow.grid_columnconfigure(col, weight=1, uniform="flow")
         for idx, (key, label) in enumerate(flow_items):
-            ttk.Label(flow, textvariable=self.flow_status_vars[key], style="Card.TLabel", font=self.font_bold).grid(row=0, column=idx * 2, padx=(0, 6))
-            ttk.Label(flow, text=label, style="MutedCard.TLabel").grid(row=0, column=idx * 2 + 1, padx=(0, 24))
+            cell = tk.Frame(flow, bg=PANEL)
+            cell.grid(row=0, column=idx, sticky="ew", padx=(0 if idx == 0 else 6, 0 if idx == len(flow_items) - 1 else 6))
+            cell.grid_columnconfigure(1, weight=1)
+            badge = tk.Label(cell, textvariable=self.flow_status_vars[key], width=3, bg="#fee2e2", fg=BAD, font=(self.ui_font_family, 12, "bold"), padx=3, pady=3)
+            badge.grid(row=0, column=0, rowspan=2, padx=(0, 8), sticky="w")
+            self.flow_tracker_labels[key] = badge
+            tk.Label(cell, text=f"{idx + 1:02d}", bg=PANEL, fg=ACCENT, font=self.font_small).grid(row=0, column=1, sticky="w")
+            tk.Label(cell, text=label, bg=PANEL, fg=INK, font=self.font_bold).grid(row=1, column=1, sticky="w")
 
         row = 1
         lut = self.flow_section(page, "library", "LUT Cache", row)
@@ -857,7 +883,7 @@ class AmpSysGUI:
         toolbar.grid(row=0, column=0, columnspan=6, sticky="ew")
         ttk.Button(toolbar, text="Add MOS", command=self.add_device).pack(side="left", padx=(0, 6))
         ttk.Button(toolbar, text="Remove Selected", style="Danger.TButton", command=self.remove_selected_devices).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="Apply Editor", command=self.apply_device_editor).pack(side="left", padx=6)
+        ttk.Button(toolbar, text="Apply Edit", command=self.apply_device_editor).pack(side="left", padx=6)
         self.warning_label = ttk.Label(toolbar, text="", style="MutedCard.TLabel")
         self.warning_label.pack(side="right")
 
@@ -878,12 +904,19 @@ class AmpSysGUI:
         self.device_tree.bind("<<TreeviewSelect>>", lambda _e: self.load_device_editor())
         self.dev_edit = {k: tk.StringVar(self.root, "") for k in ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")}
         labels = [("Name", "name"), ("Type", "type"), ("Nodes", "nodes"), ("Id uA", "current_uA"), ("Match", "match_group"), ("BW", "bw"), ("R/C", "value")]
+        editor = ttk.Frame(devices, style="StepBody.TFrame")
+        editor.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        for col in range(4):
+            editor.grid_columnconfigure(col, weight=1)
         for idx, (lab, key) in enumerate(labels):
-            ttk.Label(devices, text=lab, style="MutedCard.TLabel").grid(row=2 + (idx // 4) * 2, column=idx % 4, padx=6, pady=(4, 2), sticky="w")
-            ttk.Entry(devices, textvariable=self.dev_edit[key], width=30 if key == "nodes" else 16).grid(row=3 + (idx // 4) * 2, column=idx % 4, padx=6, pady=(0, 8), sticky="ew")
+            cell = ttk.Frame(editor, style="StepBody.TFrame")
+            cell.grid(row=idx // 4, column=idx % 4, padx=(6, 8), pady=5, sticky="ew")
+            cell.grid_columnconfigure(0, weight=1)
+            ttk.Label(cell, text=lab, style="MutedCard.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 3))
+            ttk.Entry(cell, textvariable=self.dev_edit[key], width=30 if key == "nodes" else 16).grid(row=1, column=0, sticky="ew")
 
         row += 1
-        specs = self.flow_section(page, "specs", "Specs And Run", row)
+        specs = self.flow_section(page, "specs", "Specs & Optimization", row)
         self.display_field(specs, "Gain min dB", "gain_min", 0, 0)
         self.display_field(specs, "GBW MHz", "gbw", 0, 2, scale=1e6)
         self.display_field(specs, "PM min deg", "pm_min", 1, 0)
@@ -899,7 +932,7 @@ class AmpSysGUI:
         ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=7, column=0, columnspan=4, padx=12, sticky="w")
 
         row += 1
-        viz = self.flow_section(page, "run", "Run Visualization And Log", row)
+        viz = self.flow_section(page, "run", "Live Convergence", row)
         viz.grid_columnconfigure(0, weight=1)
         viz.grid_columnconfigure(1, weight=1)
         left = ttk.Frame(viz, style="StepBody.TFrame")
@@ -917,7 +950,7 @@ class AmpSysGUI:
         self.web_canvas.pack(fill="both", expand=True, pady=(8, 0))
 
         row += 1
-        results = self.flow_section(page, "results", "Results And Cadence Writeback", row)
+        results = self.flow_section(page, "results", "Results & Cadence Writeback", row)
         result_top = ttk.Frame(results, style="StepBody.TFrame")
         result_top.grid(row=0, column=0, sticky="ew", columnspan=8)
         ttk.Button(result_top, text="Refresh Result", command=self.refresh_results).pack(side="left", padx=(0, 8))
@@ -931,6 +964,18 @@ class AmpSysGUI:
             self.result_tree.heading(col, text=col)
             self.result_tree.column(col, width=110, minwidth=90, stretch=True)
         self.result_tree.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
+        row += 1
+        footer = ttk.Frame(page, style="Shell.TFrame", padding=(18, 12, 18, 12))
+        footer.grid(row=row, column=0, sticky="ew", pady=(0, 6))
+        footer.grid_columnconfigure(0, weight=1)
+        ttk.Label(footer, text="Project links", style="Card.TLabel", font=self.font_bold).grid(row=0, column=0, sticky="w")
+        ttk.Label(footer, text="Bug reports and release updates are handled on GitHub.", style="MutedCard.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
+        footer_buttons = ttk.Frame(footer, style="StepBody.TFrame")
+        footer_buttons.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Button(footer_buttons, text="GitHub Repo", style="Link.TButton", command=lambda: self.open_url(REPO_URL)).pack(side="left", padx=(0, 6))
+        ttk.Button(footer_buttons, text="Report Issue", style="Link.TButton", command=lambda: self.open_url(ISSUES_URL)).pack(side="left", padx=6)
+        ttk.Button(footer_buttons, text="Sponsor", style="Link.TButton", command=lambda: self.open_url(SPONSOR_URL)).pack(side="left", padx=6)
         self.draw_empty_charts()
         self.update_flow_statuses()
 
