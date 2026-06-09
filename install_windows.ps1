@@ -35,11 +35,18 @@ function Set-UserEnvNoBroadcast {
 Set-UserEnvNoBroadcast -Name "AMPSYS_PLUGIN_ROOT" -Value $plugin
 Set-UserEnvNoBroadcast -Name "AMPSYS_ENGINE_ROOT" -Value $engine
 Set-UserEnvNoBroadcast -Name "AMPSYS_PYCMD" -Value $PyCmd
+$guiExe = Join-Path $plugin "gui\windows_amd64\ampsys_gui\ampsys_gui.exe"
+if (Test-Path -LiteralPath $guiExe) {
+    Set-UserEnvNoBroadcast -Name "AMPSYS_GUI_EXE" -Value $guiExe
+}
 
 Write-Host "[AmpSys] User environment variables set:"
 Write-Host "  AMPSYS_PLUGIN_ROOT=$plugin"
 Write-Host "  AMPSYS_ENGINE_ROOT=$engine"
 Write-Host "  AMPSYS_PYCMD=$PyCmd"
+if (Test-Path -LiteralPath $guiExe) {
+    Write-Host "  AMPSYS_GUI_EXE=$guiExe"
+}
 
 if ($Cdsinit -ne "") {
     $snippet = @"
@@ -67,7 +74,11 @@ Write-Host "Environment check:"
 Write-Host "  py -3 `"$plugin\tools\check_environment.py`""
 Write-Host ""
 Write-Host "Manual GUI launch:"
-Write-Host "  py -3 `"$plugin\cli\ampsys_gui.py`""
+if (Test-Path -LiteralPath $guiExe) {
+    Write-Host "  `"$guiExe`""
+} else {
+    Write-Host "  py -3 `"$plugin\cli\ampsys_gui.py`""
+}
 Write-Host ""
 Write-Host "Cadence .cdsinit line:"
 Write-Host "  load(strcat(getShellEnvVar(`"AMPSYS_PLUGIN_ROOT`") `"/skill/ampsys_init.il`"))"

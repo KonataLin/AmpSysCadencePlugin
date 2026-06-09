@@ -14,6 +14,8 @@ flowchart LR
 
 当前 release 的设计目标是：GUI、SKILL、安装脚本和 wrapper 可以公开；AmpSys 内部算法以 Windows/Linux 受保护二进制核心发布，不公开 `AmpSys`、`yami`、`TheScanner`、`acsolver` 源码。
 
+Release 包自带 Windows/Linux standalone GUI 和 protected core。普通用户不需要安装 NumPy、SciPy、Numba、Cython 等 AmpSys 内部依赖。系统 Python 只用于环境检查、脚本调试和 fallback；Cadence 主流程会优先调用 standalone GUI。
+
 ## 1. 支持环境
 
 | 环境 | 用途 | 状态 |
@@ -35,6 +37,7 @@ EngineRoot = release 包根目录
 
 ```text
 cli/                    GUI 与公开 runner wrapper
+gui/                    Windows/Linux standalone GUI
 skill/                  Cadence 菜单、schematic 抽取、结果写回
 tools/                  环境检查与 GUI launcher
 core/                   Windows/Linux 受保护 AmpSys core
@@ -63,6 +66,13 @@ Linux 安装脚本会自动解压出：
 core/linux_x86_64/ampsys_core/ampsys_core
 ```
 
+standalone GUI 应存在：
+
+```text
+gui/windows_amd64/ampsys_gui/ampsys_gui.exe
+gui/linux_x86_64/ampsys_gui/ampsys_gui
+```
+
 如果从 GitHub `git clone` 获取，请先安装 Git LFS，并确认 core 文件不是很小的 LFS pointer。更推荐直接下载 GitHub Release 里的完整压缩包。
 
 ## 3. Windows 安装
@@ -81,6 +91,12 @@ powershell -ExecutionPolicy Bypass -File <plugin-root>\install_windows.ps1 `
 py -3 <plugin-root>\tools\check_environment.py
 ```
 
+如果用户机器没有 Python，仍可直接打开 standalone GUI：
+
+```powershell
+<plugin-root>\gui\windows_amd64\ampsys_gui\ampsys_gui.exe
+```
+
 看到下面字段即可：
 
 ```text
@@ -89,6 +105,12 @@ py -3 <plugin-root>\tools\check_environment.py
 ```
 
 手动打开 GUI：
+
+```powershell
+<plugin-root>\gui\windows_amd64\ampsys_gui\ampsys_gui.exe
+```
+
+开发/调试时也可以使用公开脚本入口：
 
 ```powershell
 py -3 <plugin-root>\cli\ampsys_gui.py
@@ -159,6 +181,12 @@ source ~/.bashrc
 py -3 <plugin-root>/tools/check_environment.py
 ```
 
+如果 Linux 用户没有可用 Python，Cadence 主流程仍会优先调用 standalone GUI：
+
+```bash
+<plugin-root>/gui/linux_x86_64/ampsys_gui/ampsys_gui
+```
+
 看到下面字段即可：
 
 ```text
@@ -185,7 +213,7 @@ load(strcat(getShellEnvVar("AMPSYS_PLUGIN_ROOT") "/skill/ampsys_init.il"))
 1. 打开真正包含 MOS、R、C 器件的待优化 schematic。
 2. 确认电源和关键信号 net 已经按约定命名。
 3. 点击 `AmpSys -> Extract Current Schematic...`。
-4. 插件会导出当前 schematic 的 netlist，并自动打开 Python GUI。
+4. 插件会导出当前 schematic 的 netlist，并自动打开 AmpSys GUI。
 5. 在 GUI 顶部确认 `LUT Cache` 为 OK。
 6. 在 Devices 区域确认 MOS 都被识别出来。
 7. 给每个 MOS 填 `Id uA`。

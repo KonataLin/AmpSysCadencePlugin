@@ -30,8 +30,17 @@ from ampsys_netlist import parse_netlist
 from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, resolve_engine_root, resolve_hspice_cmd
 
 
-ROOT = Path(__file__).resolve().parents[1]
-RUNNER = Path(__file__).resolve().with_name("ampsys_runner.py")
+def detect_plugin_root() -> Path:
+    configured = os.environ.get("AMPSYS_PLUGIN_ROOT", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.exists():
+            return candidate.resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = detect_plugin_root()
+RUNNER = ROOT / "cli" / "ampsys_runner.py"
 WORKSPACE = ROOT / "workspace"
 REPO_URL = "https://github.com/KonataLin/AmpSysCadencePlugin"
 ISSUES_URL = "https://github.com/KonataLin/AmpSysCadencePlugin/issues"
@@ -143,6 +152,19 @@ def py_command() -> List[str]:
         if python_command_works(cmd):
             return cmd
     return [sys.executable] if sys.executable else ["python3"]
+
+
+def gui_relaunch_command(args: List[str]) -> List[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    return py_command() + [str(Path(__file__).resolve()), *args]
+
+
+def runner_command(cmd: str, project_path: Path) -> List[str]:
+    core = find_core_executable(ROOT)
+    if core:
+        return [str(core), cmd, "--project", str(project_path)]
+    return py_command() + [str(RUNNER), cmd, "--project", str(project_path)]
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -1608,7 +1630,7 @@ class AmpSysGUI:
         if not path:
             return
         try:
-            subprocess.Popen(py_command() + [str(Path(__file__).resolve()), "--project", path], close_fds=True)
+            subprocess.Popen(gui_relaunch_command(["--project", path]), close_fds=True)
             self.status_var.set(f"Opening project: {path}")
         except Exception as exc:
             logging.exception("Could not open project in a new GUI process: %s", path)
@@ -1785,7 +1807,7 @@ class AmpSysGUI:
         telemetry = Path(self.collect_project()["telemetry_path"])
         if telemetry.exists():
             telemetry.write_text("", encoding="utf-8")
-        command = py_command() + [str(RUNNER), cmd, "--project", str(self.project_path)]
+        command = runner_command(cmd, self.project_path)
         env = os.environ.copy()
         env["AMPSYS_ENGINE_ROOT"] = self.top_vars.get("engine_root")
         env["AMPSYS_PLUGIN_ROOT"] = str(ROOT)
@@ -2039,7 +2061,7 @@ class AmpSysGUI:
             self.update_flow_statuses()
             return False
         try:
-            output = subprocess.check_output(py_command() + [str(RUNNER), "writeback", "--project", str(self.project_path)], text=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
+            output = subprocess.check_output(runner_command("writeback", self.project_path), text=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
             logging.info("Writeback generated: %s", output.strip())
             if show_message:
                 messagebox.showinfo("AmpSys", "SKILL writeback generated:\n" + output.strip())

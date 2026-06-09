@@ -33,11 +33,24 @@ done
 if [[ -f "$CORE_BIN" ]]; then
   chmod +x "$CORE_BIN" || true
 fi
+GUI_EXE=""
+for candidate in \
+  "$PLUGIN_ROOT/gui/linux_x86_64/ampsys_gui/ampsys_gui" \
+  "$PLUGIN_ROOT/gui/linux_x86_64/ampsys_gui"; do
+  if [[ -f "$candidate" ]]; then
+    GUI_EXE="$candidate"
+    chmod +x "$GUI_EXE" || true
+    break
+  fi
+done
 for path in "$PLUGIN_ROOT/cli" "$PLUGIN_ROOT/skill" "$PLUGIN_ROOT/tools" "$PLUGIN_ROOT/assets" "$PLUGIN_ROOT/core"; do
   if [[ -e "$path" ]]; then
     chmod -R a+rX "$path" || true
   fi
 done
+if [[ -n "$GUI_EXE" ]]; then
+  chmod -R a+rX "$PLUGIN_ROOT/gui" || true
+fi
 chmod a+rx "$PLUGIN_ROOT" || true
 mkdir -p "$PLUGIN_ROOT/workspace"
 chmod -R a+rwX "$PLUGIN_ROOT/workspace" || true
@@ -113,6 +126,9 @@ chmod +x "$HOME/bin/py"
 export AMPSYS_PLUGIN_ROOT="$PLUGIN_ROOT"
 export AMPSYS_ENGINE_ROOT="$ENGINE_ROOT"
 export AMPSYS_PYCMD="py -3"
+if [[ -n "$GUI_EXE" ]]; then
+  export AMPSYS_GUI_EXE="$GUI_EXE"
+fi
 if [[ -n "$INSTALL_PYTHON" ]]; then
   export AMPSYS_PYTHON3="$INSTALL_PYTHON"
 fi
@@ -146,6 +162,9 @@ fi
 bashrc_set_export "AMPSYS_PLUGIN_ROOT" "$PLUGIN_ROOT"
 bashrc_set_export "AMPSYS_ENGINE_ROOT" "$ENGINE_ROOT"
 bashrc_set_export "AMPSYS_PYCMD" "py -3"
+if [[ -n "$GUI_EXE" ]]; then
+  bashrc_set_export "AMPSYS_GUI_EXE" "$GUI_EXE"
+fi
 if [[ -n "$INSTALL_PYTHON" ]]; then
   bashrc_set_export "AMPSYS_PYTHON3" "$INSTALL_PYTHON"
 fi
@@ -159,6 +178,11 @@ echo "  Engine: $ENGINE_ROOT"
 echo "  .cdsinit: $CDSINIT"
 echo "  Workspace: $PLUGIN_ROOT/workspace"
 echo "  Python command in Cadence: py -3"
+if [[ -n "$GUI_EXE" ]]; then
+  echo "  Standalone GUI: $GUI_EXE"
+else
+  echo "  Standalone GUI: not found; Cadence will fall back to py -3"
+fi
 echo "  Environment check: py -3 $PLUGIN_ROOT/tools/check_environment.py"
 echo "  Current shell refresh: source ~/.bashrc"
 echo "  Or temporary PATH: export PATH=\"\$HOME/bin:\$PATH\""

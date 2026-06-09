@@ -153,12 +153,25 @@ procedure(ampsysExportNetlist(lib cell view outFile)
 )
 
 procedure(ampsysLaunchGUI(projectFile netlistFile lib cell view)
-  let((cmd status launchLog)
+  let((cmd status launchLog guiExe)
     launchLog = if(and(ampsys_current_run_dir nequal(ampsys_current_run_dir ""))
       then strcat(ampsys_current_run_dir "/ampsys_launch.log")
       else strcat(ampsys_work "/ampsys_launch.log"))
-    cmd = sprintf(nil "%s%s \"%s/tools/launch_gui.py\" --gui \"%s/ampsys_gui.py\" --log \"%s\" -- --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1%s"
-      ampsys_launch_prefix ampsys_pycmd ampsys_root ampsys_cli launchLog projectFile netlistFile lib cell view launchLog ampsys_launch_suffix)
+    guiExe = ampsysGuiExecutable()
+    if(guiExe
+    then
+      if(ampsysOnWindows()
+      then
+        cmd = sprintf(nil "cmd /c start \"\" \"%s\" --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1"
+          guiExe projectFile netlistFile lib cell view launchLog)
+      else
+        cmd = sprintf(nil "\"%s\" --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1 &"
+          guiExe projectFile netlistFile lib cell view launchLog)
+      )
+    else
+      cmd = sprintf(nil "%s%s \"%s/tools/launch_gui.py\" --gui \"%s/ampsys_gui.py\" --log \"%s\" -- --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1%s"
+        ampsys_launch_prefix ampsys_pycmd ampsys_root ampsys_cli launchLog projectFile netlistFile lib cell view launchLog ampsys_launch_suffix)
+    )
     ampsysLog(sprintf(nil "Launching GUI command: %s" cmd))
     status = errset(system(cmd))
     ampsysLog(sprintf(nil "GUI launch system status=%L launchLog=%s project=%s netlist=%s" status launchLog projectFile netlistFile))

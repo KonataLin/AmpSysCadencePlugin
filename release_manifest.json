@@ -1,12 +1,16 @@
 {
   "name": "AmpSysCadencePlugin",
-  "built_at": "2026-06-09 20:40:00",
-  "method": "protected-core-binaries",
+  "built_at": "2026-06-09 21:45:00",
+  "method": "protected-core-binaries + standalone-gui",
   "platform": "windows_amd64 + linux_x86_64",
   "builder_python": "windows_amd64_py312 core; linux_x86_64_py310 core",
   "core_dirs": [
     "core/windows_amd64",
     "core/linux_x86_64.tar.gz"
+  ],
+  "gui_dirs": [
+    "gui/windows_amd64/ampsys_gui",
+    "gui/linux_x86_64/ampsys_gui"
   ],
   "engine_packages": [
     "AmpSys",
@@ -17,8 +21,9 @@
   "python_command": "py -3",
   "external_protector": "",
   "notes": [
-    "GUI/SKILL/CLI wrappers are readable.",
+    "GUI/SKILL/CLI wrappers are readable; standalone GUI executables are bundled for open-box use.",
     "Private AmpSys engine packages are compiled or frozen into standalone native core binaries.",
+    "Cadence SKILL prefers AMPSYS_GUI_EXE or bundled gui/<platform>/ampsys_gui before falling back to py -3.",
     "The public runner selects the core binary by OS/CPU, not by the user's Python minor version.",
     "Windows core is an onedir executable at core/windows_amd64/ampsys_core/ampsys_core.exe.",
     "Linux core is distributed as core/linux_x86_64.tar.gz and extracted by install_linux.sh.",

@@ -23,7 +23,7 @@
 
 ---
 
-AmpSys Cadence Plugin 把 Cadence Virtuoso、Python GUI 和 AmpSys 优化核心串成一个完整流程：
+AmpSys Cadence Plugin 把 Cadence Virtuoso、Python GUI 和 AmpSys 优化核心串成一个完整流程。Release 包内置 Windows/Linux standalone GUI 和 protected core，普通用户不需要安装 NumPy/SciPy/Numba 等内部依赖。
 
 ```mermaid
 flowchart LR
@@ -48,8 +48,8 @@ flowchart LR
 
 | 平台 | 状态 | 用途 |
 | --- | --- | --- |
-| Windows x86_64 | 支持 | GUI、HSPICE LUT 建表、环境检查 |
-| Linux x86_64, glibc >= 2.17 | 支持 | Virtuoso 集成、cache-only 优化、SKILL 写回 |
+| Windows x86_64 | 支持 | standalone GUI、HSPICE LUT 建表、环境检查 |
+| Linux x86_64, glibc >= 2.17 | 支持 | standalone GUI、Virtuoso 集成、cache-only 优化、SKILL 写回 |
 | macOS / ARM / Alpine musl / 32-bit | 暂不支持 | 当前没有对应 protected core |
 
 ## 快速开始
@@ -80,6 +80,15 @@ source ~/.bashrc
 py -3 <plugin-root>/tools/check_environment.py
 ```
 
+Release 包自带 GUI 可执行入口：
+
+```text
+gui/windows_amd64/ampsys_gui/ampsys_gui.exe
+gui/linux_x86_64/ampsys_gui/ampsys_gui
+```
+
+`check_environment.py` 是推荐诊断工具；没有系统 Python 时，Cadence 仍会优先使用 standalone GUI。
+
 环境检查应至少看到：
 
 ```text
@@ -102,6 +111,7 @@ py -3 <plugin-root>/tools/check_environment.py
 
 ```text
 cli/                    Python GUI 与公开 runner wrapper
+gui/                    Windows/Linux standalone GUI
 skill/                  Cadence SKILL 菜单、抽取和写回
 tools/                  环境检查与 GUI launcher
 core/                   Windows/Linux protected AmpSys core
