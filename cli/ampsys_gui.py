@@ -806,7 +806,7 @@ class AmpSysGUI:
         return os.name == "nt"
 
     def cache_config_ready(self, lib: Dict[str, Any]) -> bool:
-        return bool(lib.get("cache_dir")) and bool(lib.get("nmos_name")) and bool(lib.get("pmos_name"))
+        return bool(lib.get("nmos_name")) and bool(lib.get("pmos_name"))
 
     def library_ready(self, lib: Dict[str, Any]) -> bool:
         return library_ready_marker(lib, self.project_path) is not None
@@ -865,6 +865,11 @@ class AmpSysGUI:
         if bad_nodes:
             issues.append("These MOS devices do not have D/G/S/B pins: " + ", ".join(bad_nodes[:30]))
 
+        node_set = {str(node) for d in mos for node in d.get("nodes", [])}
+        missing_nets = [name for name in ("VDD", "GND", "Vin", "Vout") if name not in node_set]
+        if missing_nets:
+            issues.append("Required net names are missing: " + ", ".join(missing_nets) + ". Use exact names VDD, GND, Vin, Vout.")
+
         missing_current = [str(d.get("name", "")) for d in mos if safe_float(d.get("current"), 0.0) <= 0]
         if missing_current:
             issues.append("Set Id uA for every MOS before Run: " + ", ".join(missing_current[:30]))
@@ -872,17 +877,26 @@ class AmpSysGUI:
         return issues
 
     def spec_setup_issues(self) -> List[str]:
-        required = {
+        issues: List[str] = []
+        positive_fields = {
             "gain_min": "Gain min dB",
             "gbw": "GBW MHz",
             "pm_min": "PM min deg",
             "load_cap": "Load cap pF",
-            "saturation_margin": "Saturation margin",
         }
-        missing = [label for key, label in required.items() if not str(self.spec_vars.get(key, "")).strip()]
-        issues: List[str] = []
-        if missing:
-            issues.append("Complete these Specs fields: " + ", ".join(missing))
+        nonnegative_fields = {
+            "saturation_margin": "Saturation margin",
+            "V_in_cm": "V in cm",
+            "V_out_cm": "V out cm",
+        }
+        for key, label in positive_fields.items():
+            text = str(self.spec_vars.get(key, "")).strip()
+            if text and safe_float(text, 0.0) <= 0:
+                issues.append(f"{label} must be positive when set.")
+        for key, label in nonnegative_fields.items():
+            text = str(self.spec_vars.get(key, "")).strip()
+            if text and safe_float(text, -1.0) < 0:
+                issues.append(f"{label} must be non-negative when set.")
         if safe_int(self.cfg_vars.get("population_size"), 0) <= 0:
             issues.append("Population must be a positive integer.")
         if safe_int(self.cfg_vars.get("max_generations"), 0) <= 0:
@@ -897,7 +911,7 @@ class AmpSysGUI:
         cache_config_ok = self.cache_config_ready(lib)
         library_ok = cache_config_ok and self.library_ready(lib)
         if not cache_config_ok:
-            library_detail = "Cache dir, NMOS name, and PMOS name are required."
+            library_detail = "NMOS name and PMOS name are required."
         elif library_ok:
             library_detail = "Cache is ready."
         else:
@@ -1012,9 +1026,9 @@ class AmpSysGUI:
         self.display_field(specs, "GBW MHz", "gbw", 0, 2, scale=1e6)
         self.display_field(specs, "PM min deg", "pm_min", 1, 0)
         self.display_field(specs, "Load cap pF", "load_cap", 1, 2, scale=1e-12)
-        self.display_field(specs, "V in cm", "V_in_cm", 2, 0)
-        self.display_field(specs, "V out cm", "V_out_cm", 2, 2)
-        self.display_field(specs, "Saturation margin", "saturation_margin", 3, 0)
+        self.display_field(specs, "V in cm opt", "V_in_cm", 2, 0)
+        self.display_field(specs, "V out cm opt", "V_out_cm", 2, 2)
+        self.display_field(specs, "Sat margin opt", "saturation_margin", 3, 0)
         self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2)
         self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0)
         ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=4, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
@@ -1279,14 +1293,19 @@ class AmpSysGUI:
         bools = {"force_rescan", "use_batch_mode"}
         floats = {"temperature", "process_vdd", "L_min", "scan_width", "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop", "vds_step", "vsb_start", "vsb_stop", "vsb_step"}
         ints = {"batch_size", "batch_timeout_ms"}
+        defaults = default_project(self.project_path)["library"]
+        string_defaults = {"model_lib", "hspice_cmd", "cache_dir", "temp_dir"}
         out: Dict[str, Any] = {}
         for k, v in raw.items():
+            text = str(v).strip() if v is not None else ""
             if k in bools:
                 out[k] = bool(v)
             elif k in floats:
-                out[k] = safe_float(v)
+                out[k] = safe_float(text, safe_float(defaults.get(k), 0.0)) if text else defaults.get(k, 0.0)
             elif k in ints:
-                out[k] = safe_int(v)
+                out[k] = safe_int(text, safe_int(defaults.get(k), 0)) if text else defaults.get(k, 0)
+            elif k in string_defaults and text == "":
+                out[k] = defaults[k]
             else:
                 out[k] = rel_or_abs(v)
         return out
@@ -1298,7 +1317,7 @@ class AmpSysGUI:
             if key == "enable_vds_iteration":
                 out[key] = bool(val)
             elif val == "":
-                out[key] = ""
+                continue
             else:
                 scale = getattr(var, "_ampsys_scale", 1.0)
                 out[key] = safe_float(val) * scale
@@ -1404,7 +1423,6 @@ class AmpSysGUI:
             label for key, label in (
                 ("nmos_name", "NMOS name"),
                 ("pmos_name", "PMOS name"),
-                ("cache_dir", "Cache dir"),
             )
             if not str(lib.get(key, "")).strip()
         ]
@@ -1454,7 +1472,6 @@ class AmpSysGUI:
             label for key, label in (
                 ("nmos_name", "NMOS name"),
                 ("pmos_name", "PMOS name"),
-                ("cache_dir", "Cache dir"),
             )
             if not str(lib.get(key, "")).strip()
         ]

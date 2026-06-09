@@ -132,9 +132,9 @@ Id uA
 Specs 常用字段：
 
 ```text
-Gain min dB, GBW MHz, PM min deg
-Load cap pF, V in cm, V out cm
-Saturation margin, Population, Generations
+常用目标：Gain min dB, GBW MHz, PM min deg, Load cap pF
+可选初猜：V in cm, V out cm, Saturation margin
+运行规模：Population, Generations
 ```
 
 运行：
