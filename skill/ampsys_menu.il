@@ -39,8 +39,4 @@ unless(_ampsysMenuTimerOn
   ampsysLog("Menu timer started.")
 )
 
-errset(hiSetBindKeys("Schematics" list(
-  list("Ctrl Shift<Key>a" "ampsysExtractCurrentSchematic()")
-)))
-
-ampsysLog("Menu loaded. Shortcut: Ctrl+Shift+A in Schematics.")
+ampsysLog("Menu loaded. No schematic bindkeys are modified.")
