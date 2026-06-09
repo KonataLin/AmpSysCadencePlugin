@@ -54,8 +54,51 @@ procedure(ampsysEnsureDir(dir)
   isDir(dir)
 )
 
+procedure(ampsysAppendLogFile(path line)
+  when(path
+    errset(
+      let((port)
+        port = outfile(path "a")
+        when(port
+          fprintf(port "%s\n" line)
+          close(port)
+        )
+      )
+    )
+  )
+  t
+)
+
+procedure(ampsysSkillLogPath()
+  strcat(ampsys_work "/ampsys_skill.log")
+)
+
+procedure(ampsysRunSkillLogPath()
+  if(and(ampsys_current_run_dir nequal(ampsys_current_run_dir ""))
+  then
+    strcat(ampsys_current_run_dir "/ampsys_skill.log")
+  else
+    nil
+  )
+)
+
+procedure(ampsysLog(text)
+  let((line runLog)
+    line = sprintf(nil "%s [AmpSys] %s" ampsysTimestamp() text)
+    printf("%s\n" line)
+    ampsysEnsureDir(ampsys_work)
+    ampsysAppendLogFile(ampsysSkillLogPath() line)
+    runLog = ampsysRunSkillLogPath()
+    when(runLog
+      ampsysEnsureDir(ampsys_current_run_dir)
+      ampsysAppendLogFile(runLog line)
+    )
+    t
+  )
+)
+
 procedure(ampsysDialog(text dialogType)
-  printf("%s\n" text)
+  ampsysLog(text)
   errset(hiDisplayAppDBox(
     ?name gensym("ampsysMsg")
     ?dboxBanner "AmpSys"
@@ -68,15 +111,18 @@ procedure(ampsysDialog(text dialogType)
 )
 
 procedure(ampsysWarn(text)
+  ampsysLog(strcat("WARN: " text))
   ampsysDialog(text hicWarningDialog)
 )
 
 procedure(ampsysInfo(text)
+  ampsysLog(strcat("INFO: " text))
   ampsysDialog(text hicInformationDialog)
 )
 
 procedure(ampsysDeleteFile(path)
   when(isFile(path)
+    ampsysLog(sprintf(nil "Deleting file: %s" path))
     unless(car(errset(deleteFile(path)))
       if(getShellEnvVar("ComSpec")
       then
@@ -118,7 +164,11 @@ procedure(ampsysSetCurrentFromCV(cv)
     ampsys_current_cell = cv~>cellName
     ampsys_current_view = cv~>viewName
     ampsys_current_run_dir = ampsysProjectDir(ampsys_current_lib ampsys_current_cell)
+    ampsysEnsureDir(ampsys_current_run_dir)
+    ampsysLog(sprintf(nil "Current schematic set: lib=%s cell=%s view=%s runDir=%s"
+      ampsys_current_lib ampsys_current_cell ampsys_current_view ampsys_current_run_dir))
   )
 )
 
-printf("  [AmpSys] Globals loaded. root=%s pycmd=%s\n" ampsys_root ampsys_pycmd)
+ampsysLog(sprintf(nil "Globals loaded. root=%s work=%s cli=%s pycmd=%s launch_suffix=%s"
+  ampsys_root ampsys_work ampsys_cli ampsys_pycmd ampsys_launch_suffix))

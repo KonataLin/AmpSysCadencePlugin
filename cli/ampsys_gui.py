@@ -519,9 +519,40 @@ class AmpSysGUI:
         self.bind_status_traces()
         self.refresh_device_table()
         self.refresh_results()
+        self.log_startup_context(args)
         if args.netlist:
             self.parse_netlist_from_gui()
         logging.info("AmpSys GUI started. project=%s root=%s", self.project_path, ROOT)
+
+    def log_startup_context(self, args: argparse.Namespace) -> None:
+        try:
+            payload = {
+                "argv": sys.argv,
+                "args": vars(args),
+                "root": str(ROOT),
+                "project_path": str(self.project_path),
+                "log_path": str(self.log_path),
+                "default_engine_root": str(DEFAULT_ENGINE_ROOT),
+                "python_command": py_command(),
+                "python_executable": sys.executable,
+                "python_version": sys.version,
+                "platform": sys.platform,
+                "os_name": os.name,
+                "cwd": os.getcwd(),
+                "env": {
+                    "AMPSYS_PLUGIN_ROOT": os.environ.get("AMPSYS_PLUGIN_ROOT", ""),
+                    "AMPSYS_ENGINE_ROOT": os.environ.get("AMPSYS_ENGINE_ROOT", ""),
+                    "AMPSYS_CORE_ROOT": os.environ.get("AMPSYS_CORE_ROOT", ""),
+                    "AMPSYS_PYCMD": os.environ.get("AMPSYS_PYCMD", ""),
+                    "AMPSYS_PYTHON3": os.environ.get("AMPSYS_PYTHON3", ""),
+                    "DISPLAY": os.environ.get("DISPLAY", ""),
+                    "PATH": os.environ.get("PATH", ""),
+                },
+                "project": self.project,
+            }
+            logging.info("Startup context:\n%s", json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        except Exception:
+            logging.exception("Could not write startup context")
 
     def setup_style(self) -> None:
         try:
@@ -1442,6 +1473,13 @@ class AmpSysGUI:
                 merged.append(row)
             self.devices = merged
             self.warnings = warnings
+            logging.info(
+                "Parsed netlist=%s pins=%s warnings=%s devices=%s",
+                path,
+                pins,
+                warnings,
+                json.dumps(self.devices, indent=2, ensure_ascii=False, default=str),
+            )
             self.refresh_device_table()
             suffix = f" with {len(warnings)} warning(s)" if warnings else ""
             self.status_var.set(f"Parsed {len(devices)} devices from {path.name}{suffix}")
@@ -1746,6 +1784,8 @@ class AmpSysGUI:
         env["AMPSYS_ENGINE_ROOT"] = self.top_vars.get("engine_root")
         env["AMPSYS_PLUGIN_ROOT"] = str(ROOT)
         logging.info("Starting runner: %s", command)
+        logging.info("Runner project snapshot:\n%s", json.dumps(self.collect_project(), indent=2, ensure_ascii=False, default=str))
+        logging.info("Runner log path: %s", self.runner_log_path)
         try:
             self.proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT), env=env)
         except Exception as exc:

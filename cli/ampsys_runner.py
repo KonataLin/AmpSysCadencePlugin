@@ -106,6 +106,12 @@ def delegate_to_core(argv: List[str]) -> int:
         return 127
     cmd = argv[0] if argv else ""
     project_path = project_arg_path(argv)
+    if project_path and cmd in {"build-library", "optimize", "writeback"}:
+        try:
+            project = json.loads(project_path.read_text(encoding="utf-8-sig"))
+            print_project_summary(project, project_path, cmd)
+        except Exception as exc:
+            print(f"[AmpSys] WARNING: could not print project summary: {exc}", file=sys.stderr)
     argv = prepare_project_for_core(argv)
     env = os.environ.copy()
     env[CORE_INTERNAL_ENV] = "1"
@@ -252,6 +258,81 @@ def skill_quote(value: Any) -> str:
 
 def skill_string_list(items: List[str]) -> str:
     return "list(" + " ".join(skill_quote(x) for x in items) + ")"
+
+
+def project_debug_summary(project: Dict[str, Any], project_path: Path, cmd: str) -> Dict[str, Any]:
+    lib = project.get("library", {})
+    cfg = project.get("config", {})
+    specs = project.get("specs", {})
+    devices = []
+    for d in project.get("devices", []):
+        devices.append({
+            "name": d.get("name", ""),
+            "type": d.get("type", d.get("kind", "")),
+            "model": d.get("model", ""),
+            "nodes": d.get("nodes", []),
+            "raw_nodes": d.get("raw_nodes", []),
+            "terminal_order": d.get("terminal_order", ""),
+            "current_A": d.get("current", d.get("Id", "")),
+            "match_group": d.get("match_group", ""),
+            "bw_factor": d.get("bw_factor", ""),
+        })
+    return {
+        "cmd": cmd,
+        "project_path": str(project_path),
+        "project_dir": project.get("project_dir", ""),
+        "engine_root": project.get("engine_root", ""),
+        "netlist_path": project.get("netlist_path", ""),
+        "telemetry_path": project.get("telemetry_path", ""),
+        "result_path": project.get("result_path", ""),
+        "skill_result_path": project.get("skill_result_path", ""),
+        "cadence": project.get("cadence", {}),
+        "library": {
+            "cache_dir": lib.get("cache_dir", ""),
+            "model_path": lib.get("model_path", ""),
+            "nmos_name": lib.get("nmos_name", ""),
+            "pmos_name": lib.get("pmos_name", ""),
+            "model_lib": lib.get("model_lib", ""),
+            "temperature": lib.get("temperature", ""),
+            "process_vdd": lib.get("process_vdd", ""),
+            "hspice_dir": lib.get("hspice_dir", ""),
+            "hspice_cmd": lib.get("hspice_cmd", ""),
+            "L_min": lib.get("L_min", ""),
+            "L_list": lib.get("L_list", ""),
+            "scan_width": lib.get("scan_width", ""),
+            "vgs": [lib.get("vgs_start", ""), lib.get("vgs_stop", ""), lib.get("vgs_step", "")],
+            "vds": [lib.get("vds_start", ""), lib.get("vds_stop", ""), lib.get("vds_step", "")],
+            "vsb": [lib.get("vsb_start", ""), lib.get("vsb_stop", ""), lib.get("vsb_step", "")],
+        },
+        "specs": specs,
+        "config": {
+            "population_size": cfg.get("population_size", ""),
+            "max_generations": cfg.get("max_generations", ""),
+            "fast_mode": cfg.get("fast_mode", ""),
+            "verbose": cfg.get("verbose", ""),
+            "parallel": cfg.get("parallel", ""),
+            "random_seed": cfg.get("random_seed", ""),
+        },
+        "settings": project.get("settings", {}),
+        "device_count": len(devices),
+        "devices": devices,
+        "passives": project.get("passives", []),
+        "platform": {
+            "system": platform.platform(),
+            "machine": platform.machine(),
+            "python": sys.version.split()[0],
+            "executable": sys.executable,
+            "binary_platform_tag": binary_platform_tag(),
+            "core_executable": str(find_core_executable() or ""),
+        },
+    }
+
+
+def print_project_summary(project: Dict[str, Any], project_path: Path, cmd: str) -> None:
+    summary = project_debug_summary(project, project_path, cmd)
+    print("[AmpSys] Project summary begin")
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print("[AmpSys] Project summary end")
 
 
 def get_float(mapping: Dict[str, Any], key: str, default: float) -> float:
@@ -803,6 +884,7 @@ def write_skill_result(
 
 def run_build_library(project_path: Path) -> None:
     project = json.loads(project_path.read_text(encoding="utf-8-sig"))
+    print_project_summary(project, project_path, "build-library")
     telemetry = Path(project.get("telemetry_path") or project_path.with_name("telemetry.jsonl"))
     lib = project.get("library", {})
     l_list = parse_float_list(lib.get("L_list"))
@@ -838,6 +920,7 @@ def run_build_library(project_path: Path) -> None:
 def run_optimize(project_path: Path) -> None:
     project = json.loads(project_path.read_text(encoding="utf-8-sig"))
     project["project_dir"] = project.get("project_dir") or str(project_path.parent)
+    print_project_summary(project, project_path, "optimize")
     ensure_library_ready(project, project_path)
     telemetry = Path(project.get("telemetry_path") or project_path.with_name("telemetry.jsonl"))
     result_path = Path(project.get("result_path") or project_path.with_name("result.json"))
@@ -957,6 +1040,7 @@ def run_optimize(project_path: Path) -> None:
 
 def run_writeback(project_path: Path) -> None:
     project = json.loads(project_path.read_text(encoding="utf-8-sig"))
+    print_project_summary(project, project_path, "writeback")
     result_path = Path(project.get("result_path") or project_path.with_name("result.json"))
     skill_path = Path(project.get("skill_result_path") or project_path.with_name("ampsys_result.il"))
     cad = project.get("cadence", {})

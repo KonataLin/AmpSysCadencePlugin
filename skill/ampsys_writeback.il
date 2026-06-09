@@ -12,10 +12,17 @@ defvar(ampsys_writeback_finger_aliases nil)
 procedure(ampsysFindInstance(cv instName)
   let((found)
     found = nil
+    ampsysLog(sprintf(nil "Find instance start: target=%s in=%s/%s/%s" instName cv~>libName cv~>cellName cv~>viewName))
     foreach(inst cv~>instances
       when(equal(inst~>name instName)
         found = inst
       )
+    )
+    if(found
+    then
+      ampsysLog(sprintf(nil "Find instance ok: target=%s lib=%s cell=%s" instName found~>libName found~>cellName))
+    else
+      ampsysLog(sprintf(nil "Find instance missed: target=%s" instName))
     )
     found
   )
@@ -54,14 +61,17 @@ procedure(ampsysSetInstParam(inst pname pval)
     ok = nil
     param = ampsysFindCDFParam(inst pname)
     when(param
+      ampsysLog(sprintf(nil "Write CDF param: inst=%s param=%s value=%s" inst~>name pname pval))
       param~>value = pval
       ok = t
       when(param~>callback
+        ampsysLog(sprintf(nil "Run CDF callback: inst=%s param=%s callback=%s" inst~>name pname param~>callback))
         errset(evalstring(param~>callback))
       )
     )
     unless(ok
       when(pname
+        ampsysLog(sprintf(nil "Write db property fallback: inst=%s prop=%s value=%s" inst~>name pname pval))
         errset(dbReplaceProp(inst pname "string" pval))
         ok = t
       )
@@ -73,6 +83,7 @@ procedure(ampsysSetInstParam(inst pname pval)
 procedure(ampsysSetBestInstParam(inst aliases pval)
   let((chosen)
     chosen = nil
+    ampsysLog(sprintf(nil "Choose writeback alias: inst=%s aliases=%L value=%s" inst~>name aliases pval))
     when(listp(aliases)
       foreach(pname aliases
         unless(chosen
@@ -86,6 +97,7 @@ procedure(ampsysSetBestInstParam(inst aliases pval)
       )
     )
     when(chosen
+      ampsysLog(sprintf(nil "Chosen writeback alias: inst=%s alias=%s value=%s" inst~>name chosen pval))
       ampsysSetInstParam(inst chosen pval)
     )
   )
@@ -94,6 +106,7 @@ procedure(ampsysSetBestInstParam(inst aliases pval)
 procedure(ampsysApplyParamAction(inst action)
   let((kind aliases value useFinger)
     kind = car(action)
+    ampsysLog(sprintf(nil "Apply param action: inst=%s action=%L" inst~>name action))
     cond(
       ((equal(kind "width"))
         aliases = cadddr(action)
@@ -109,6 +122,8 @@ procedure(ampsysApplyParamAction(inst action)
           )
         )
         value = if(useFinger then cadr(action) else caddr(action))
+        ampsysLog(sprintf(nil "Width writeback decision: inst=%s mode=%s useFinger=%L value=%s fingerValue=%s totalValue=%s"
+          inst~>name ampsys_writeback_width_mode useFinger value cadr(action) caddr(action)))
         ampsysSetBestInstParam(inst aliases value)
       )
       ((equal(kind "length"))
@@ -131,7 +146,10 @@ procedure(ampsysApplyParamAction(inst action)
 )
 
 procedure(ampsysApplyResultToCell(lib cell view)
-  let((cv applied missed)
+  let((cv applied missed nRecords)
+    nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
+    ampsysLog(sprintf(nil "Apply result to cell start: lib=%s cell=%s view=%s records=%d"
+      lib cell view nRecords))
     cv = dbOpenCellViewByType(lib cell view nil "a")
     unless(cv
       ampsysWarn(sprintf(nil "[AmpSys] Cannot open %s/%s/%s for edit." lib cell view))
@@ -158,19 +176,20 @@ procedure(ampsysApplyResultToCell(lib cell view)
           printf("[AmpSys] Applied %s\n" instName)
         else
           missed = missed + 1
-          printf("[AmpSys] WARN: instance %s not found\n" instName)
+          ampsysLog(sprintf(nil "WARN: instance %s not found during writeback" instName))
         )
       )
     )
     dbSave(cv)
-    printf("[AmpSys] Writeback complete: applied=%d missed=%d saved=%s/%s/%s\n"
-      applied missed lib cell view)
+    ampsysLog(sprintf(nil "Writeback complete: applied=%d missed=%d saved=%s/%s/%s"
+      applied missed lib cell view))
     t
   )
 )
 
 procedure(ampsysApplyResultFile(resultFile)
-  let((cv lib cell view)
+  let((cv lib cell view nRecords)
+    ampsysLog(sprintf(nil "Apply result file start: %s" resultFile))
     unless(isFile(resultFile)
       ampsysWarn(sprintf(nil "[AmpSys] No result to apply yet.\nExpected file:\n%s\n\nRun optimization in the AmpSys GUI, then click Confirm and Apply in Cadence." resultFile))
       return(nil)
@@ -185,6 +204,9 @@ procedure(ampsysApplyResultFile(resultFile)
       ampsysWarn(sprintf(nil "[AmpSys] Could not load result file:\n%s" resultFile))
       return(nil)
     )
+    nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
+    ampsysLog(sprintf(nil "Result file loaded: records=%d lib=%s cell=%s view=%s widthMode=%s fingerAliases=%L"
+      nRecords ampsys_result_lib ampsys_result_cell ampsys_result_view ampsys_writeback_width_mode ampsys_writeback_finger_aliases))
     cv = ampsysCurrentCV()
     if(and(boundp('ampsys_result_lib) nequal(ampsys_result_lib ""))
     then
@@ -206,6 +228,7 @@ procedure(ampsysApplyResultFile(resultFile)
 
 procedure(ampsysApplyLastResult()
   let((cv runDir resultFile)
+    ampsysLog("Menu action: Apply Last Result")
     cv = ampsysCurrentCV()
     unless(cv
       ampsysWarn("[AmpSys] Open the target schematic first.")
@@ -214,18 +237,20 @@ procedure(ampsysApplyLastResult()
     ampsysSetCurrentFromCV(cv)
     runDir = ampsysProjectDir(cv~>libName cv~>cellName)
     resultFile = strcat(runDir "/ampsys_result.il")
+    ampsysLog(sprintf(nil "Apply Last Result paths: runDir=%s resultFile=%s" runDir resultFile))
     ampsysApplyResultFile(resultFile)
   )
 )
 
 procedure(ampsysStartApplyPoll(runDir)
+  ampsysLog(sprintf(nil "Start apply poll requested: runDir=%s" runDir))
   unless(member(runDir _ampsysPollDirs)
     _ampsysPollDirs = cons(runDir _ampsysPollDirs)
   )
   unless(_ampsysPollTimerOn
     _ampsysPollTimerOn = t
     hiRegTimer("ampsysApplyPoll()" 2)
-    printf("[AmpSys] Apply poll started for %s\n" runDir)
+    ampsysLog(sprintf(nil "Apply poll started for %s" runDir))
   )
 )
 
@@ -235,15 +260,15 @@ procedure(ampsysApplyPoll()
       flag = strcat(runDir "/apply.request")
       resultFile = strcat(runDir "/ampsys_result.il")
       when(isFile(flag)
-        printf("[AmpSys] Apply request detected: %s\n" flag)
+        ampsysLog(sprintf(nil "Apply request detected: flag=%s resultFile=%s" flag resultFile))
         ampsysDeleteFile(flag)
         if(isFile(resultFile)
         then
           unless(ampsysApplyResultFile(resultFile)
-            printf("[AmpSys] Apply request was not completed. Check result file: %s\n" resultFile)
+            ampsysLog(sprintf(nil "Apply request was not completed. Check result file: %s" resultFile))
           )
         else
-          printf("[AmpSys] Apply request ignored because result file does not exist yet: %s\n" resultFile)
+          ampsysLog(sprintf(nil "Apply request ignored because result file does not exist yet: %s" resultFile))
         )
       )
     )
@@ -251,4 +276,4 @@ procedure(ampsysApplyPoll()
   hiRegTimer("ampsysApplyPoll()" 2)
 )
 
-printf("  [AmpSys] Writeback loaded.\n")
+ampsysLog("Writeback loaded.")
