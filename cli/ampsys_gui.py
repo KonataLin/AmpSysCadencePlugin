@@ -63,6 +63,10 @@ BAD_BG = "#fff1f2"
 NEUTRAL_BG = "#ffffff"
 FLOW_OK = "OK"
 FLOW_PENDING = "NO"
+STDOUT_LINES_PER_TICK = 120
+LOG_TEXT_MAX_LINES = 2500
+TELEMETRY_READ_BYTES = 256 * 1024
+TELEMETRY_EVENTS_PER_TICK = 300
 
 FONT_CANDIDATES = (
     "Segoe UI",
@@ -526,6 +530,9 @@ class AmpSysGUI:
         self.active_cmd = ""
         self.stdout_queue: "queue.Queue[str]" = queue.Queue()
         self.telemetry_seen = 0
+        self.telemetry_offset = 0
+        self.telemetry_remainder = ""
+        self.telemetry_pending: List[str] = []
         self.telemetry_events: List[Dict[str, Any]] = []
         self.result_data: Dict[str, Any] = {}
         self.last_points: List[Dict[str, Any]] = []
@@ -1800,6 +1807,9 @@ class AmpSysGUI:
         self.active_cmd = cmd
         self.build_started_at = time.time()
         self.telemetry_seen = 0
+        self.telemetry_offset = 0
+        self.telemetry_remainder = ""
+        self.telemetry_pending.clear()
         self.telemetry_events.clear()
         self.last_points.clear()
         self.log_text.delete("1.0", "end")
@@ -1838,16 +1848,27 @@ class AmpSysGUI:
             self.stdout_queue.put(line)
 
     def poll_process(self) -> None:
-        while True:
+        batch: List[str] = []
+        while len(batch) < STDOUT_LINES_PER_TICK:
             try:
-                line = self.stdout_queue.get_nowait()
+                batch.append(self.stdout_queue.get_nowait())
             except queue.Empty:
                 break
-            self.log_text.insert("end", line)
+        if batch:
+            self.log_text.insert("end", "".join(batch))
             self.log_text.see("end")
             if self.runner_log_path:
                 with self.runner_log_path.open("a", encoding="utf-8") as f:
-                    f.write(line)
+                    f.writelines(batch)
+            try:
+                end_line = int(float(self.log_text.index("end-1c").split(".")[0]))
+                if end_line > LOG_TEXT_MAX_LINES:
+                    self.log_text.delete("1.0", f"{end_line - LOG_TEXT_MAX_LINES}.0")
+            except Exception:
+                pass
+        if batch and not self.stdout_queue.empty():
+            self.root.after(10, self.poll_process)
+            return
         self.read_telemetry()
         self.animate_build_progress()
         if self.proc and self.proc.poll() is None:
@@ -1885,18 +1906,46 @@ class AmpSysGUI:
             self.status_var.set("Stopping...")
 
     def read_telemetry(self) -> None:
-        telemetry = Path(self.collect_project()["telemetry_path"])
-        if not telemetry.exists():
-            return
-        lines = telemetry.read_text(encoding="utf-8", errors="ignore").splitlines()
-        for line in lines[self.telemetry_seen:]:
+        telemetry = Path(self.project.get("telemetry_path") or self.project_path.parent / "telemetry.jsonl")
+        if self.telemetry_pending:
+            lines = self.telemetry_pending
+            self.telemetry_pending = []
+        else:
+            if not telemetry.exists():
+                return
+            try:
+                if telemetry.stat().st_size < self.telemetry_offset:
+                    self.telemetry_offset = 0
+                    self.telemetry_remainder = ""
+                    self.telemetry_pending = []
+                with telemetry.open("r", encoding="utf-8", errors="ignore") as f:
+                    f.seek(self.telemetry_offset)
+                    chunk = f.read(TELEMETRY_READ_BYTES)
+                    self.telemetry_offset = f.tell()
+            except OSError:
+                return
+            if not chunk:
+                return
+            text = self.telemetry_remainder + chunk
+            if text.endswith("\n"):
+                lines = text.splitlines()
+                self.telemetry_remainder = ""
+            else:
+                lines = text.splitlines()
+                self.telemetry_remainder = lines.pop() if lines else text
+        batch = lines[:TELEMETRY_EVENTS_PER_TICK]
+        if len(lines) > TELEMETRY_EVENTS_PER_TICK:
+            self.telemetry_pending = lines[TELEMETRY_EVENTS_PER_TICK:]
+        for line in batch:
             try:
                 event = json.loads(line)
             except Exception:
                 continue
             self.telemetry_events.append(event)
             self.handle_event(event)
-        self.telemetry_seen = len(lines)
+        self.telemetry_seen += len(batch)
+        if self.telemetry_pending:
+            self.root.after(10, self.read_telemetry)
 
     def handle_event(self, event: Dict[str, Any]) -> None:
         status = event.get("status", "")
