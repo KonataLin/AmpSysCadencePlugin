@@ -135,6 +135,13 @@ core/linux_x86_64.tar.gz
 
 不要发布内部源码目录，例如 `AmpSys/`、`yami/`、`TheScanner/`、`acsolver/`。用户侧发布的是 GUI、SKILL、wrapper、安装脚本和受保护 core。
 
+## 本版重点
+
+- 默认 quiet 优化：verbose 关闭时，进度条和动态 metric 仍通过 `telemetry.jsonl` 刷新。
+- 对外隐藏 raw fitness：GUI、日志、telemetry、result 中统一显示 Convergence/收敛度，不暴露具体 fitness 数值。
+- 动态指标按电路能力显示：差分结果会显示 CMRR、PSRR、Area；单端没有的指标不会硬塞到图里。
+- W/L 写回默认保留 2 位小数，可在 GUI 底部 `Settings -> Geometry decimals` 修改。
+
 ## 日志与反馈
 
 遇到问题时，请优先附上相关日志：

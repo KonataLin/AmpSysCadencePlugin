@@ -284,6 +284,7 @@ DEFAULT_WRITEBACK_SETTINGS: Dict[str, Any] = {
     "nmos_terminal_order": "D G S B",
     "pmos_terminal_order": "D G S B",
     "width_mode": "auto",
+    "geometry_decimals": "2",
     "width_aliases": "w,W,wr,width",
     "length_aliases": "l,L,lr,length",
     "finger_aliases": "nf,nfin,nFin,fingers,finger,ng",
@@ -328,6 +329,10 @@ def project_debug_summary(project: Dict[str, Any], project_path: Path, cmd: str)
     lib = project.get("library", {})
     cfg = project.get("config", {})
     specs = project.get("specs", {})
+    public_specs = {
+        (f"convergence_weight_{key[len('fitness_'):]}" if str(key).startswith("fitness_") else key): value
+        for key, value in specs.items()
+    }
     devices = []
     for d in project.get("devices", []):
         devices.append({
@@ -368,7 +373,7 @@ def project_debug_summary(project: Dict[str, Any], project_path: Path, cmd: str)
             "vds": [lib.get("vds_start", ""), lib.get("vds_stop", ""), lib.get("vds_step", "")],
             "vsb": [lib.get("vsb_start", ""), lib.get("vsb_stop", ""), lib.get("vsb_step", "")],
         },
-        "specs": specs,
+        "specs": public_specs,
         "config": {
             "population_size": cfg.get("population_size", ""),
             "max_generations": cfg.get("max_generations", ""),
@@ -819,10 +824,17 @@ def make_intents(project: Dict[str, Any]):
     return mos, passives, mos_name_map
 
 
+def individual_fitness(ind) -> float:
+    try:
+        return float(getattr(ind, "fitness", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
 def metrics_from_individual(ind) -> Dict[str, Any]:
     ac = getattr(ind, "ac_result", None)
     sized = getattr(ind, "sized_data", None)
-    out = {"fitness": float(getattr(ind, "fitness", 0.0) or 0.0)}
+    out: Dict[str, Any] = {}
     if ac:
         out.update(
             gain=float(getattr(ac, "dc_gain", 0.0) or 0.0),
@@ -833,11 +845,93 @@ def metrics_from_individual(ind) -> Dict[str, Any]:
             psrr=float(getattr(ac, "psrr", 0.0) or 0.0),
         )
     if sized:
+        total_area_um2 = sum(
+            float(getattr(mos, "W", 0.0) or 0.0) * float(getattr(mos, "L", 0.0) or 0.0)
+            for mos in getattr(sized, "transistors", {}).values()
+        ) * 1e12
         out.update(
             power=float(getattr(sized, "total_power", 0.0) or 0.0),
             current=float(getattr(sized, "total_current", 0.0) or 0.0),
+            area_um2=total_area_um2,
         )
     return out
+
+
+def build_generation_event(gen: int, optimizer: Any) -> Dict[str, Any]:
+    population = list(getattr(optimizer, "population", []) or [])
+    population.sort(key=individual_fitness, reverse=True)
+    fitness_values = [individual_fitness(ind) for ind in population]
+    f_min = min(fitness_values) if fitness_values else 0.0
+    f_max = max(fitness_values) if fitness_values else 1.0
+    f_span = f_max - f_min
+    points: List[Dict[str, Any]] = []
+    for rank, ind in enumerate(population[:120]):
+        point = metrics_from_individual(ind)
+        if f_span > 0:
+            point["convergence"] = (individual_fitness(ind) - f_min) / f_span
+        else:
+            point["convergence"] = 1.0 - (rank / max(1, min(len(population), 120) - 1))
+        points.append(point)
+    best_ind = getattr(optimizer, "best_individual", None)
+    best = metrics_from_individual(best_ind) if best_ind is not None else (points[0] if points else {})
+    max_generations = int(getattr(getattr(optimizer, "config", None), "max_generations", 0) or getattr(optimizer, "max_generations", 0) or 0)
+    generation = int(gen) + 1
+    best["convergence"] = generation / max(1, max_generations)
+    stats = {}
+    generation_stats = getattr(optimizer, "generation_stats", None)
+    if generation_stats:
+        try:
+            stats = {
+                str(key): value
+                for key, value in dict(generation_stats[-1]).items()
+                if "fitness" not in str(key).lower()
+            }
+        except Exception:
+            stats = {}
+    return {
+        "phase": "optimize",
+        "status": "generation",
+        "generation": generation,
+        "max_generations": max_generations,
+        "progress": generation / max(1, max_generations),
+        "best": best,
+        "stats": stats,
+        "points": points,
+        "population_size": len(population),
+        "time": time.time(),
+    }
+
+
+def install_optimizer_telemetry(telemetry: Path) -> None:
+    try:
+        from yami.optimizer import GeneticOptimizer
+    except Exception as exc:
+        print(f"[AmpSys] WARNING: live telemetry disabled: {exc}", file=sys.stderr)
+        return
+
+    if getattr(GeneticOptimizer, "_ampsys_telemetry_installed", False):
+        GeneticOptimizer._ampsys_telemetry_path = telemetry
+        return
+
+    original_optimize = GeneticOptimizer.optimize
+
+    def optimize_with_telemetry(self, initial_population=None, callback=None):
+        telemetry_path = getattr(GeneticOptimizer, "_ampsys_telemetry_path", telemetry)
+
+        def telemetry_callback(gen, optimizer):
+            try:
+                append_event(Path(telemetry_path), build_generation_event(gen, optimizer))
+            except Exception as exc:
+                print(f"[AmpSys] WARNING: live telemetry event failed: {exc}", file=sys.stderr)
+            if callback:
+                return bool(callback(gen, optimizer))
+            return False
+
+        return original_optimize(self, initial_population=initial_population, callback=telemetry_callback)
+
+    GeneticOptimizer.optimize = optimize_with_telemetry
+    GeneticOptimizer._ampsys_telemetry_path = telemetry
+    GeneticOptimizer._ampsys_telemetry_installed = True
 
 
 def summarize_result(result, mos_name_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -884,8 +978,14 @@ def summarize_result(result, mos_name_map: Optional[Dict[str, str]] = None) -> D
     if sized:
         metrics["power"] = float(getattr(sized, "total_power", 0.0) or 0.0)
         metrics["current"] = float(getattr(sized, "total_current", 0.0) or 0.0)
+        total_area_um2 = sum(
+            float(getattr(mos, "W", 0.0) or 0.0) * float(getattr(mos, "L", 0.0) or 0.0)
+            for mos in getattr(sized, "transistors", {}).values()
+        ) * 1e12
+        metrics["area_um2"] = total_area_um2
+        metrics["area_per_device_um2"] = total_area_um2 / max(1, len(getattr(sized, "transistors", {}) or {}))
     return {
-        "best_fitness": float(getattr(result, "best_fitness", 0.0) or 0.0),
+        "convergence": 1.0,
         "total_generations": int(getattr(result, "total_generations", 0) or 0),
         "total_evaluations": int(getattr(result, "total_evaluations", 0) or 0),
         "metrics": metrics,
@@ -924,9 +1024,14 @@ def write_skill_result(
     width_mode = str(wb.get("width_mode") or "auto").strip().lower()
     if width_mode not in {"auto", "finger", "total"}:
         width_mode = "auto"
+    try:
+        geometry_decimals = int(float(wb.get("geometry_decimals", 2)))
+    except Exception:
+        geometry_decimals = 2
+    geometry_decimals = max(0, min(9, geometry_decimals))
 
     def fmt_u(value: float) -> str:
-        return f"{value * 1e6:.6g}u"
+        return f"{float(value or 0.0) * 1e6:.{geometry_decimals}f}u"
 
     def fmt_passive(name: str, value: float) -> str:
         if name.upper().startswith("R"):
@@ -1061,6 +1166,7 @@ def run_optimize(project_path: Path) -> None:
     try:
         # Keep the plugin on the same public API path used by AmpSys examples:
         # AmpFlow.from_pdk(...) -> set_topology(...) -> flow.optimize(specs=...).
+        install_optimizer_telemetry(telemetry)
         result = flow.optimize(specs=specs)
         summary = summarize_result(result, mos_name_map)
         validate_result_summary(summary)

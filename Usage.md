@@ -428,3 +428,10 @@ Run Optimization 可点击
 赞助支持：
 
 [https://www.afdian.com/a/LocyDragon](https://www.afdian.com/a/LocyDragon)
+
+## 13. 本版 GUI 行为说明
+
+- `Run Optimization` 默认保持 quiet 模式，不打开 verbose；进度条和动态指标图来自 `telemetry.jsonl`，不会因为 verbose 关闭而停止刷新。
+- GUI 和日志中不显示原始 fitness 数值，对外统一显示为 Convergence/收敛度；`telemetry.jsonl` 和 `result.json` 也不会写出 raw fitness。
+- 动态 metric 图按实际结果显示指标：单端电路没有 CMRR/PSRR 时不会硬显示；差分电路若引擎返回 CMRR、PSRR、Area，则会自动加入动态指标图和结果摘要。
+- W/L 写回默认保留小数点后 2 位，例如 `1.93u`；需要修改时展开 GUI 底部 `Settings`，改 `Geometry decimals`，合法范围是 0 到 9。

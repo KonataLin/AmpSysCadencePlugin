@@ -224,6 +224,38 @@ def fmt_si(value: Any, scale: float = 1.0, digits: int = 5) -> str:
     return f"{val:.{digits}f}".rstrip("0").rstrip(".")
 
 
+def sanitize_runner_output(text: str) -> str:
+    text = re.sub(r"(?im)\bbest_fitness\b\s*[:=]\s*[-+0-9.eE]+", "convergence: [hidden]", text)
+    text = re.sub(r"(?im)\bfitness\b\s*[:=]\s*[-+0-9.eE]+", "convergence: [hidden]", text)
+    text = re.sub(r"(?im)\bfitness\b\s+[-+0-9.eE]+", "convergence: [hidden]", text)
+    text = re.sub(r"(?i)\bbest_fitness\b", "convergence", text)
+    text = re.sub(r"(?i)\bfitness\b", "convergence", text)
+    return text
+
+
+METRIC_AXIS_DEFS = [
+    ("gain", "Gain"),
+    ("gbw", "GBW"),
+    ("pm", "PM"),
+    ("cmrr", "CMRR"),
+    ("psrr", "PSRR"),
+    ("power", "Power"),
+    ("noise", "Noise"),
+    ("area_um2", "Area"),
+    ("convergence", "Convergence"),
+]
+LOWER_BETTER_METRICS = {"power", "noise", "area_um2"}
+
+
+def point_metric_axes(points: List[Dict[str, Any]]) -> List[tuple]:
+    axes = [
+        (key, label)
+        for key, label in METRIC_AXIS_DEFS
+        if key == "convergence" or any(key in point for point in points)
+    ]
+    return axes if len(axes) >= 2 else [("convergence", "Convergence")]
+
+
 def read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -952,6 +984,8 @@ class AmpSysGUI:
             self.set_entry_state(f"settings.{key}", "ok" if split_csv(str(self.settings_vars.get(key, "")).replace(" ", ",")) else "bad")
         self.set_entry_state("settings.multiplier_aliases", "ok" if str(self.settings_vars.get("multiplier_aliases", "")).strip() else "neutral")
         self.set_entry_state("settings.multiplier_value", "ok" if str(self.settings_vars.get("multiplier_value", "")).strip() else "neutral")
+        geometry_decimals = safe_int(self.settings_vars.get("geometry_decimals", ""), -1)
+        self.set_entry_state("settings.geometry_decimals", "ok" if 0 <= geometry_decimals <= 9 else "bad")
 
     def can_build_library_here(self) -> bool:
         return os.name == "nt"
@@ -1071,6 +1105,9 @@ class AmpSysGUI:
                 issues.append(f"{label} cannot be empty.")
         if str(settings.get("width_mode", "auto")).lower() not in {"auto", "finger", "total"}:
             issues.append("Width writeback must be auto, finger, or total.")
+        geometry_decimals = safe_int(settings.get("geometry_decimals", ""), -1)
+        if geometry_decimals < 0 or geometry_decimals > 9:
+            issues.append("Geometry decimals must be an integer from 0 to 9.")
         return issues
 
     def update_flow_statuses(self) -> None:
@@ -1225,6 +1262,7 @@ class AmpSysGUI:
         self.combo(self.settings_body, "Width writeback", self.settings_vars.vars["width_mode"], 0, 4, ("auto", "finger", "total"))
         self.field(self.settings_body, "Width aliases", self.settings_vars.vars["width_aliases"], 1, 0, width=34, field_key="settings.width_aliases")
         self.field(self.settings_body, "Length aliases", self.settings_vars.vars["length_aliases"], 1, 2, width=34, field_key="settings.length_aliases")
+        self.field(self.settings_body, "Geometry decimals", self.settings_vars.vars["geometry_decimals"], 1, 4, field_key="settings.geometry_decimals")
         self.field(self.settings_body, "Finger aliases", self.settings_vars.vars["finger_aliases"], 2, 0, width=34, field_key="settings.finger_aliases")
         self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
         self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
@@ -1614,6 +1652,7 @@ class AmpSysGUI:
         out["width_mode"] = str(out.get("width_mode", "auto")).strip().lower()
         if out["width_mode"] not in {"auto", "finger", "total"}:
             out["width_mode"] = "auto"
+        out["geometry_decimals"] = str(max(0, min(9, safe_int(out.get("geometry_decimals", 2), 2))))
         return out
 
     def save_project(self) -> None:
@@ -1856,11 +1895,12 @@ class AmpSysGUI:
             except queue.Empty:
                 break
         if batch:
-            self.log_text.insert("end", "".join(batch))
+            text = sanitize_runner_output("".join(batch))
+            self.log_text.insert("end", text)
             self.log_text.see("end")
             if self.runner_log_path:
                 with self.runner_log_path.open("a", encoding="utf-8") as f:
-                    f.writelines(batch)
+                    f.write(text)
             try:
                 end_line = int(float(self.log_text.index("end-1c").split(".")[0]))
                 if end_line > LOG_TEXT_MAX_LINES:
@@ -1955,14 +1995,16 @@ class AmpSysGUI:
             gen = event.get("generation", 0)
             max_gen = event.get("max_generations", 1)
             self.progress_var.set(100 * safe_float(event.get("progress"), gen / max(1, max_gen)))
-            best = event.get("best", {})
-            self.status_var.set(f"Gen {gen}/{max_gen}  best={best.get('fitness', 0):.4g}")
+            self.status_var.set(f"Gen {gen}/{max_gen}  convergence updated")
             self.last_points = event.get("points", [])
             self.draw_charts()
         elif status == "start":
             if phase == "build_library" and event.get("total_points"):
                 self.status_var.set(f"Building LUT: {event.get('total_points'):,} HSPICE points")
                 self.progress_var.set(2)
+            elif phase == "optimize":
+                self.status_var.set("Optimization started")
+                self.progress_var.set(1)
             else:
                 self.status_var.set(f"{phase} started")
         elif status == "done":
@@ -1982,15 +2024,15 @@ class AmpSysGUI:
     def draw_empty_charts(self) -> None:
         self.conv_canvas.delete("all")
         self.web_canvas.delete("all")
-        self.conv_canvas.create_text(30, 30, anchor="nw", fill=MUTED, text="Run optimization to draw fitness history.", font=self.font_bold)
+        self.conv_canvas.create_text(30, 30, anchor="nw", fill=MUTED, text="Run optimization to draw convergence history.", font=self.font_bold)
         self.web_canvas.create_text(30, 30, anchor="nw", fill=MUTED, text="Population metrics will appear here per generation.", font=self.font_bold)
 
     def draw_charts(self) -> None:
         gen_events = [e for e in self.telemetry_events if e.get("status") == "generation"]
-        fitness = [safe_float(e.get("best", {}).get("fitness"), 0.0) for e in gen_events]
-        if not fitness and self.result_data:
-            fitness = [safe_float(self.result_data.get("best_fitness"), 0.0)]
-        self.draw_line(self.conv_canvas, fitness)
+        convergence = [safe_float(e.get("best", {}).get("convergence"), 0.0) for e in gen_events]
+        if not convergence and self.result_data:
+            convergence = [safe_float(self.result_data.get("convergence"), 1.0)]
+        self.draw_line(self.conv_canvas, convergence)
         self.draw_metric_web(self.web_canvas, self.last_points)
 
     def draw_line(self, canvas: tk.Canvas, values: List[float]) -> None:
@@ -2017,14 +2059,14 @@ class AmpSysGUI:
             canvas.create_line(*points, fill=ACCENT_2, width=3, smooth=True)
         for x, y in zip(points[0::2], points[1::2]):
             canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=ACCENT_2, outline="")
-        canvas.create_text(pad, 14, anchor="nw", fill=INK, text=f"Best fitness {values[-1]:.5g}", font=self.font_bold)
+        canvas.create_text(pad, 14, anchor="nw", fill=INK, text="Convergence trend", font=self.font_bold)
 
     def draw_metric_web(self, canvas: tk.Canvas, points: List[Dict[str, Any]]) -> None:
         canvas.delete("all")
         w = max(10, canvas.winfo_width())
         h = max(10, canvas.winfo_height())
         pad = 52
-        axes = [("gain", "Gain"), ("gbw", "GBW"), ("pm", "PM"), ("power", "Power"), ("noise", "Noise"), ("fitness", "Fit")]
+        axes = point_metric_axes(points)
         canvas.create_rectangle(0, 0, w, h, fill=CHART_BG, outline="")
         if not points:
             if self.draw_result_metric_summary(canvas, w, h, pad):
@@ -2043,16 +2085,16 @@ class AmpSysGUI:
             if math.isclose(mins[key], maxs[key]):
                 mins[key] -= 1.0
                 maxs[key] += 1.0
-        sorted_points = sorted(points, key=lambda p: safe_float(p.get("fitness"), 0.0))
+        sorted_points = sorted(points, key=lambda p: safe_float(p.get("convergence"), 0.0))
         sample = sorted_points[-80:]
         for p in sample:
-            fit = safe_float(p.get("fitness"), 0.0)
-            fit_norm = (fit - mins["fitness"]) / (maxs["fitness"] - mins["fitness"])
-            color = self.mix_color("#c7d2fe", ACCENT_2, fit_norm)
+            convergence = safe_float(p.get("convergence"), 0.0)
+            conv_norm = (convergence - mins["convergence"]) / (maxs["convergence"] - mins["convergence"])
+            color = self.mix_color("#c7d2fe", ACCENT_2, conv_norm)
             coords = []
             for x, (key, _label) in zip(xs, axes):
                 val = safe_float(p.get(key), 0.0)
-                if key in ("power", "noise"):
+                if key in LOWER_BETTER_METRICS:
                     norm = 1.0 - (val - mins[key]) / (maxs[key] - mins[key])
                 else:
                     norm = (val - mins[key]) / (maxs[key] - mins[key])
@@ -2065,7 +2107,7 @@ class AmpSysGUI:
         for x, (key, _label) in zip(xs, axes):
             val = safe_float(best.get(key), 0.0)
             norm = (val - mins[key]) / (maxs[key] - mins[key])
-            if key in ("power", "noise"):
+            if key in LOWER_BETTER_METRICS:
                 norm = 1.0 - norm
             y = h - pad - norm * (h - 2 * pad)
             best_coords.extend([x, y])
@@ -2076,15 +2118,24 @@ class AmpSysGUI:
         metrics = self.result_data.get("metrics", {}) if isinstance(self.result_data, dict) else {}
         if not metrics:
             return False
-        fitness = safe_float(self.result_data.get("best_fitness"), 0.0)
-        values = [
-            ("Gain", min(1.0, max(0.0, safe_float(metrics.get("dc_gain"), 0.0) / 100.0)), f"{safe_float(metrics.get('dc_gain'), 0.0):.1f} dB"),
-            ("GBW", min(1.0, max(0.0, math.log10(max(1.0, safe_float(metrics.get("gbw"), 0.0))) / 10.0)), f"{safe_float(metrics.get('gbw'), 0.0)/1e6:.2f} MHz"),
-            ("PM", min(1.0, max(0.0, safe_float(metrics.get("pm"), 0.0) / 90.0)), f"{safe_float(metrics.get('pm'), 0.0):.1f} deg"),
-            ("Power", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("power"), 0.0) / 1e-3)), f"{safe_float(metrics.get('power'), 0.0)*1e6:.1f} uW"),
-            ("Noise", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("noise"), 0.0) / 1e-6)), f"{safe_float(metrics.get('noise'), 0.0):.2g}"),
-            ("Fit", min(1.0, max(0.0, fitness)), f"{fitness:.4g}"),
-        ]
+        values: List[tuple] = []
+        if "dc_gain" in metrics:
+            values.append(("Gain", min(1.0, max(0.0, safe_float(metrics.get("dc_gain"), 0.0) / 100.0)), f"{safe_float(metrics.get('dc_gain'), 0.0):.1f} dB"))
+        if "gbw" in metrics:
+            values.append(("GBW", min(1.0, max(0.0, math.log10(max(1.0, safe_float(metrics.get("gbw"), 0.0))) / 10.0)), f"{safe_float(metrics.get('gbw'), 0.0)/1e6:.2f} MHz"))
+        if "pm" in metrics:
+            values.append(("PM", min(1.0, max(0.0, safe_float(metrics.get("pm"), 0.0) / 90.0)), f"{safe_float(metrics.get('pm'), 0.0):.1f} deg"))
+        if safe_float(metrics.get("cmrr"), 0.0) > 0:
+            values.append(("CMRR", min(1.0, max(0.0, safe_float(metrics.get("cmrr"), 0.0) / 100.0)), f"{safe_float(metrics.get('cmrr'), 0.0):.1f} dB"))
+        if safe_float(metrics.get("psrr"), 0.0) > 0:
+            values.append(("PSRR", min(1.0, max(0.0, safe_float(metrics.get("psrr"), 0.0) / 100.0)), f"{safe_float(metrics.get('psrr'), 0.0):.1f} dB"))
+        if "power" in metrics:
+            values.append(("Power", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("power"), 0.0) / 1e-3)), f"{safe_float(metrics.get('power'), 0.0)*1e6:.1f} uW"))
+        if safe_float(metrics.get("noise"), 0.0) > 0:
+            values.append(("Noise", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("noise"), 0.0) / 1e-6)), f"{safe_float(metrics.get('noise'), 0.0):.2g}"))
+        if safe_float(metrics.get("area_um2"), 0.0) > 0:
+            values.append(("Area", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("area_um2"), 0.0) / 1000.0)), f"{safe_float(metrics.get('area_um2'), 0.0):.1f} um2"))
+        values.append(("Convergence", safe_float(self.result_data.get("convergence"), 1.0), "complete"))
         xs = [pad + i * (w - 2 * pad) / max(1, len(values) - 1) for i in range(len(values))]
         coords: List[float] = []
         for x, (label, norm, text) in zip(xs, values):
@@ -2116,7 +2167,22 @@ class AmpSysGUI:
             return
         self.result_data = read_json(path, {})
         metrics = self.result_data.get("metrics", {})
-        self.metrics_label.config(text=f"Gain {metrics.get('dc_gain', 0):.2f} dB | GBW {metrics.get('gbw', 0)/1e6:.2f} MHz | PM {metrics.get('pm', 0):.1f} deg | Power {metrics.get('power', 0)*1e6:.2f} uW")
+        metric_parts = []
+        if "dc_gain" in metrics:
+            metric_parts.append(f"Gain {safe_float(metrics.get('dc_gain'), 0.0):.2f} dB")
+        if "gbw" in metrics:
+            metric_parts.append(f"GBW {safe_float(metrics.get('gbw'), 0.0)/1e6:.2f} MHz")
+        if "pm" in metrics:
+            metric_parts.append(f"PM {safe_float(metrics.get('pm'), 0.0):.1f} deg")
+        if safe_float(metrics.get("cmrr"), 0.0) > 0:
+            metric_parts.append(f"CMRR {safe_float(metrics.get('cmrr'), 0.0):.1f} dB")
+        if safe_float(metrics.get("psrr"), 0.0) > 0:
+            metric_parts.append(f"PSRR {safe_float(metrics.get('psrr'), 0.0):.1f} dB")
+        if "power" in metrics:
+            metric_parts.append(f"Power {safe_float(metrics.get('power'), 0.0)*1e6:.2f} uW")
+        if safe_float(metrics.get("area_um2"), 0.0) > 0:
+            metric_parts.append(f"Area {safe_float(metrics.get('area_um2'), 0.0):.1f} um2")
+        self.metrics_label.config(text=" | ".join(metric_parts) if metric_parts else "Result loaded")
         for d in self.result_data.get("devices", []):
             self.result_tree.insert("", "end", values=(
                 d.get("name", ""),
