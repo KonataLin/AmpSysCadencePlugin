@@ -49,8 +49,8 @@ ACCENT_2 = "#10b981"
 ACCENT_3 = "#f59e0b"
 WARN = "#b7791f"
 BAD = "#dc2626"
-FLOW_OK = "\u2713"
-FLOW_PENDING = "\u00d7"
+FLOW_OK = "OK"
+FLOW_PENDING = "NO"
 
 FONT_CANDIDATES = (
     "Segoe UI",
@@ -877,8 +877,6 @@ class AmpSysGUI:
             "gbw": "GBW MHz",
             "pm_min": "PM min deg",
             "load_cap": "Load cap pF",
-            "V_in_cm": "V in cm",
-            "V_out_cm": "V out cm",
             "saturation_margin": "Saturation margin",
         }
         missing = [label for key, label in required.items() if not str(self.spec_vars.get(key, "")).strip()]
