@@ -1250,7 +1250,6 @@ class AmpSysGUI:
         result_top = ttk.Frame(results, style="StepBody.TFrame")
         result_top.grid(row=0, column=0, sticky="ew", columnspan=8)
         ttk.Button(result_top, text="Refresh Result", command=self.refresh_results).pack(side="left", padx=(0, 8))
-        ttk.Button(result_top, text="Generate SKILL Writeback", command=self.generate_writeback).pack(side="left", padx=8)
         ttk.Button(result_top, text="Confirm and Apply in Cadence", style="Accent.TButton", command=self.request_cadence_apply).pack(side="left", padx=8)
         self.metrics_label = ttk.Label(result_top, text="", style="MutedCard.TLabel")
         self.metrics_label.pack(side="right")
@@ -1501,7 +1500,7 @@ class AmpSysGUI:
         project["project_dir"] = str(self.project_path.parent)
         project["engine_root"] = self.top_vars.get("engine_root")
         project["netlist_path"] = self.top_vars.get("netlist_path")
-        project["skip_kcl"] = True
+        project["skip_kcl"] = False
         project["telemetry_path"] = str(self.project_path.parent / "telemetry.jsonl")
         project["result_path"] = str(self.project_path.parent / "result.json")
         project["skill_result_path"] = str(self.project_path.parent / "ampsys_result.il")
@@ -2029,7 +2028,7 @@ class AmpSysGUI:
                 fmt_si(d.get("Vdsat", 0)),
             ))
 
-    def generate_writeback(self) -> bool:
+    def generate_writeback(self, show_message: bool = False) -> bool:
         self.save_project()
         result_path = Path(self.collect_project()["result_path"])
         if not result_path.is_file():
@@ -2042,7 +2041,8 @@ class AmpSysGUI:
         try:
             output = subprocess.check_output(py_command() + [str(RUNNER), "writeback", "--project", str(self.project_path)], text=True, encoding="utf-8", errors="replace", cwd=str(ROOT))
             logging.info("Writeback generated: %s", output.strip())
-            messagebox.showinfo("AmpSys", "SKILL writeback generated:\n" + output.strip())
+            if show_message:
+                messagebox.showinfo("AmpSys", "SKILL writeback generated:\n" + output.strip())
             return True
         except subprocess.CalledProcessError as exc:
             logging.exception("Writeback generation failed")
@@ -2050,7 +2050,7 @@ class AmpSysGUI:
             return False
 
     def request_cadence_apply(self) -> None:
-        if not self.generate_writeback():
+        if not self.generate_writeback(show_message=False):
             return
         request_path = self.project_path.parent / "apply.request"
         try:
@@ -2059,7 +2059,13 @@ class AmpSysGUI:
             logging.exception("Could not write Cadence apply request: %s", request_path)
             messagebox.showerror("AmpSys", f"Could not write apply request:\n{request_path}\n\n{exc}\n\nLog: {self.log_path}")
             return
-        msg = f"Apply request written:\n{request_path}\n\nIf this GUI was launched from Cadence, the SKILL timer will apply it. Otherwise use AmpSys -> Apply Last Result."
+        skill_path = Path(self.collect_project()["skill_result_path"])
+        msg = (
+            f"SKILL writeback generated:\n{skill_path}\n\n"
+            f"Apply request written:\n{request_path}\n\n"
+            "If this GUI was launched from Cadence, the SKILL timer will apply it. "
+            "Otherwise use AmpSys -> Apply Last Result."
+        )
         logging.info("Cadence apply request written: %s", request_path)
         messagebox.showinfo("AmpSys", msg)
 

@@ -13,7 +13,23 @@ if [[ "$SCRIPT_DIR" != "$PLUGIN_ROOT" ]]; then
   cp -a "$SCRIPT_DIR/." "$PLUGIN_ROOT/"
 fi
 
-CORE_BIN="$PLUGIN_ROOT/core/linux_x86_64/ampsys_core"
+LINUX_CORE_ARCHIVE="$PLUGIN_ROOT/core/linux_x86_64.tar.gz"
+LINUX_CORE_DIR="$PLUGIN_ROOT/core/linux_x86_64"
+if [[ ! -x "$LINUX_CORE_DIR/ampsys_core/ampsys_core" && ! -x "$LINUX_CORE_DIR/ampsys_core" && -f "$LINUX_CORE_ARCHIVE" ]]; then
+  mkdir -p "$PLUGIN_ROOT/core"
+  rm -rf "$LINUX_CORE_DIR"
+  tar -xzf "$LINUX_CORE_ARCHIVE" -C "$PLUGIN_ROOT/core"
+fi
+
+CORE_BIN=""
+for candidate in \
+  "$LINUX_CORE_DIR/ampsys_core/ampsys_core" \
+  "$LINUX_CORE_DIR/ampsys_core"; do
+  if [[ -f "$candidate" ]]; then
+    CORE_BIN="$candidate"
+    break
+  fi
+done
 if [[ -f "$CORE_BIN" ]]; then
   chmod +x "$CORE_BIN" || true
 fi

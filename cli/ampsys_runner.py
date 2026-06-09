@@ -69,12 +69,17 @@ def core_search_roots(plugin_root: Path) -> List[Path]:
 def find_core_executable(plugin_root: Optional[Path] = None) -> Optional[Path]:
     plugin_root = (plugin_root or Path(__file__).resolve().parents[1]).resolve()
     name = core_executable_name()
+    stem = Path(name).stem
     tag = binary_platform_tag()
     candidates: List[Path] = []
     for root in core_search_roots(plugin_root):
         candidates.extend([
             root / tag / name,
+            root / tag / stem / name,
+            root / tag / name / name,
             root / name,
+            root / stem / name,
+            root / name / name,
         ])
     for cand in candidates:
         if cand.is_file():
@@ -82,7 +87,7 @@ def find_core_executable(plugin_root: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def should_delegate_to_core(cmd: str = "") -> bool:
+def should_delegate_to_core(cmd: str = "", argv: Optional[List[str]] = None) -> bool:
     if os.environ.get(CORE_INTERNAL_ENV) == "1":
         return False
     if os.environ.get(DISABLE_CORE_ENV) == "1":
@@ -189,6 +194,17 @@ def resolve_engine_root(base: Path) -> Path:
 
 
 def add_engine_path(engine_root: str) -> Path:
+    if os.environ.get(CORE_INTERNAL_ENV) == "1" and getattr(sys, "frozen", False):
+        root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)).resolve()
+        _scrub_external_engine_paths(
+            root,
+            [
+                engine_root,
+                os.environ.get("AMPSYS_ENGINE_ROOT", ""),
+                os.environ.get("AMPSYS_PLUGIN_ROOT", ""),
+            ],
+        )
+        return root
     root_text = engine_root or os.environ.get("AMPSYS_ENGINE_ROOT", "")
     if root_text:
         root = resolve_engine_root(Path(root_text).expanduser())
@@ -203,6 +219,54 @@ def add_engine_path(engine_root: str) -> Path:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     return root
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_sys_path_entry(entry: str) -> Optional[Path]:
+    if not entry:
+        return None
+    try:
+        return Path(entry).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _scrub_external_engine_paths(bundle_root: Path, explicit_roots: List[str]) -> None:
+    """Keep frozen private core isolated from accidental source-engine imports."""
+    bundle_root = bundle_root.resolve()
+    blocked: List[Path] = []
+    for text in explicit_roots:
+        if not text:
+            continue
+        try:
+            blocked.append(Path(text).expanduser().resolve())
+        except Exception:
+            continue
+
+    cleaned: List[str] = []
+    for entry in sys.path:
+        path = _resolve_sys_path_entry(entry)
+        if path is None:
+            continue
+        if path == bundle_root:
+            continue
+        if _path_is_relative_to(path, bundle_root):
+            cleaned.append(entry)
+            continue
+        if any(path == root or _path_is_relative_to(path, root) for root in blocked):
+            continue
+        if all((path / pkg).exists() for pkg in ENGINE_PACKAGES):
+            continue
+        cleaned.append(entry)
+
+    sys.path[:] = [str(bundle_root), *cleaned]
 
 
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -629,34 +693,37 @@ def resolve_hspice_cmd(lib: Dict[str, Any]) -> str:
 def create_flow(project: Dict[str, Any]):
     engine_root = add_engine_path(project.get("engine_root", ""))
     from AmpSys import AmpFlow, AmpFlowConfig
+    import inspect
 
     lib = project["library"]
     run_cfg = project.get("config", {})
     cache_dir = lib.get("cache_dir") or str(Path(project.get("project_dir", ".")).resolve() / "libraries")
     temp_dir = lib.get("temp_dir") or str(Path(project.get("project_dir", ".")).resolve() / "workspace" / "tmp")
 
-    flow = AmpFlow.from_pdk(
-        model_path=lib["model_path"],
-        cellname_nmos=lib["nmos_name"],
-        cellname_pmos=lib["pmos_name"],
-        model_lib=lib.get("model_lib", "tt"),
-        L_list=parse_float_list(lib.get("L_list")),
-        L_min=get_float(lib, "L_min", 0.18e-6),
-        VGS_range=parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02)),
-        VDS_range=parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.05)),
-        VSB_range=parse_range(lib, "vsb", (0.0, 0.0, 0.1)),
-        scan_width=get_float(lib, "scan_width", 10e-6),
-        temperature=get_float(lib, "temperature", 25.0),
-        use_batch_mode=bool(lib.get("use_batch_mode", True)),
-        batch_size=get_int(lib, "batch_size", 20),
-        batch_timeout_ms=get_int(lib, "batch_timeout_ms", 50),
-        process_vdd=get_float(lib, "process_vdd", 1.8),
-        hspice_cmd=resolve_hspice_cmd(lib),
-        cache_dir=cache_dir,
-        temp_dir=temp_dir,
-        force_rescan=bool(lib.get("force_rescan", False)),
-        verbose=bool(run_cfg.get("verbose", True)),
-    )
+    from_pdk_kwargs = {
+        "model_path": lib["model_path"],
+        "cellname_nmos": lib["nmos_name"],
+        "cellname_pmos": lib["pmos_name"],
+        "model_lib": lib.get("model_lib", "tt"),
+        "L_list": parse_float_list(lib.get("L_list")),
+        "L_min": get_float(lib, "L_min", 0.18e-6),
+        "VGS_range": parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02)),
+        "VDS_range": parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.05)),
+        "VSB_range": parse_range(lib, "vsb", (0.0, 0.0, 0.1)),
+        "scan_width": get_float(lib, "scan_width", 10e-6),
+        "temperature": get_float(lib, "temperature", 25.0),
+        "use_batch_mode": bool(lib.get("use_batch_mode", True)),
+        "batch_size": get_int(lib, "batch_size", 20),
+        "batch_timeout_ms": get_int(lib, "batch_timeout_ms", 50),
+        "process_vdd": get_float(lib, "process_vdd", 1.8),
+        "hspice_cmd": resolve_hspice_cmd(lib),
+        "cache_dir": cache_dir,
+        "temp_dir": temp_dir,
+        "force_rescan": bool(lib.get("force_rescan", False)),
+        "verbose": bool(run_cfg.get("verbose", True)),
+    }
+    supported = set(inspect.signature(AmpFlow.from_pdk).parameters)
+    flow = AmpFlow.from_pdk(**{k: v for k, v in from_pdk_kwargs.items() if k in supported})
     flow.config = AmpFlowConfig(
         population_size=get_int(run_cfg, "population_size", 50),
         max_generations=get_int(run_cfg, "max_generations", 20),
@@ -689,6 +756,23 @@ def make_intents(project: Dict[str, Any]):
 
     mos = []
     passives = []
+    mos_name_map: Dict[str, str] = {}
+    used_mos_names: set = set()
+
+    def internal_mos_name(original: str) -> str:
+        raw = str(original or "").strip()
+        safe = re.sub(r"[^A-Za-z0-9_]", "_", raw) or "MOS"
+        if safe[:1].upper() != "M":
+            safe = f"M_{safe}"
+        candidate = safe
+        idx = 2
+        while candidate in used_mos_names:
+            candidate = f"{safe}_{idx}"
+            idx += 1
+        used_mos_names.add(candidate)
+        mos_name_map[candidate] = raw
+        return candidate
+
     for d in project.get("devices", []):
         dtype = d.get("type") or d.get("kind")
         if dtype in ("nmos", "pmos"):
@@ -697,9 +781,11 @@ def make_intents(project: Dict[str, Any]):
                 current = get_float(d, "Id", 0.0)
             if current <= 0:
                 raise ValueError(f"{d.get('name')}: current must be specified before run.")
+            original_name = d["name"]
+            amp_name = internal_mos_name(original_name)
             mos.append(
                 MosIntent(
-                    name=d["name"],
+                    name=amp_name,
                     mos_type=dtype,
                     nodes=list(d["nodes"][:4]),
                     Id=current,
@@ -730,7 +816,7 @@ def make_intents(project: Dict[str, Any]):
                     value=p.get("value"),
                 )
             )
-    return mos, passives
+    return mos, passives, mos_name_map
 
 
 def metrics_from_individual(ind) -> Dict[str, Any]:
@@ -754,7 +840,8 @@ def metrics_from_individual(ind) -> Dict[str, Any]:
     return out
 
 
-def summarize_result(result) -> Dict[str, Any]:
+def summarize_result(result, mos_name_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    mos_name_map = mos_name_map or {}
     sized = getattr(result, "best_sized_data", None)
     ac = getattr(result, "best_ac_result", None)
     devices = []
@@ -762,9 +849,11 @@ def summarize_result(result) -> Dict[str, Any]:
     if sized:
         passives = dict(getattr(sized, "passives", {}) or {})
         for name, mos in getattr(sized, "transistors", {}).items():
+            original_name = mos_name_map.get(name, name)
             devices.append(
                 {
-                    "name": name,
+                    "name": original_name,
+                    "internal_name": name,
                     "type": getattr(mos, "mos_type", ""),
                     "W": float(getattr(mos, "W", 0.0) or 0.0),
                     "L": float(getattr(mos, "L", 0.0) or 0.0),
@@ -805,6 +894,17 @@ def summarize_result(result) -> Dict[str, Any]:
     }
 
 
+def validate_result_summary(summary: Dict[str, Any]) -> None:
+    devices = summary.get("devices") or []
+    passives = summary.get("passives") or {}
+    if not devices and not passives:
+        raise RuntimeError(
+            "AmpSys optimization finished without any sized devices. "
+            "No writeback file was generated. Check the optimizer log for synthesis "
+            "violations, topology recognition, LUT coverage, and terminal order."
+        )
+
+
 def write_skill_result(
     result_json: Path,
     skill_path: Path,
@@ -814,6 +914,7 @@ def write_skill_result(
     settings: Optional[Dict[str, Any]] = None,
 ) -> None:
     data = json.loads(result_json.read_text(encoding="utf-8-sig"))
+    validate_result_summary(data)
     wb = merged_writeback_settings(settings)
     width_aliases = split_aliases(wb.get("width_aliases"), DEFAULT_WRITEBACK_SETTINGS["width_aliases"])
     length_aliases = split_aliases(wb.get("length_aliases"), DEFAULT_WRITEBACK_SETTINGS["length_aliases"])
@@ -952,91 +1053,17 @@ def run_optimize(project_path: Path) -> None:
     append_event(telemetry, {"phase": "optimize", "status": "start", "time": time.time()})
 
     flow, _ = create_flow(project)
-    mos, passives = make_intents(project)
+    mos, passives, mos_name_map = make_intents(project)
     flow.set_topology(mos, passives, skip_kcl=bool(project.get("skip_kcl", False)))
 
-    from yami.optimizer import GeneticOptimizer, OptimizerConfig
-    from yami.objectives import ObjectiveFactory
-    import numpy as np
-
     specs = project["specs"]
-    if flow._context is None:
-        flow._build_context(specs)
-
-    weight_keys = ("fitness_a", "fitness_b", "fitness_c", "fitness_d", "fitness_e", "fitness_f", "fitness_g")
-    objective_kwargs = {k: specs[k] for k in weight_keys if k in specs}
-    objective = ObjectiveFactory.create("Balanced", flow._context.spec, **objective_kwargs)
-    cfg = project.get("config", {})
-    opt_config = OptimizerConfig(
-        population_size=get_int(cfg, "population_size", 50),
-        max_generations=get_int(cfg, "max_generations", 20),
-        elite_ratio=get_float(cfg, "elite_ratio", 0.1),
-        crossover_prob=get_float(cfg, "crossover_prob", 0.85),
-        mutation_prob=get_float(cfg, "mutation_prob", 0.5),
-        mutation_sigma_gmid=get_float(cfg, "mutation_sigma_gmid", 1.5),
-        mutation_sigma_L=get_float(cfg, "mutation_sigma_L", 0.5e-6),
-        mutation_sigma_I=get_float(cfg, "mutation_sigma_I", 10e-6),
-        tournament_size=get_int(cfg, "tournament_size", 3),
-        selection_strategy=cfg.get("selection_strategy", "tournament"),
-        rank_pressure=get_float(cfg, "rank_pressure", 1.8),
-        de_mutation_prob=get_float(cfg, "de_mutation_prob", 0.5),
-        random_guy_ratio=get_float(cfg, "random_guy_ratio", 0.1),
-        cataclysm_patience=get_int(cfg, "cataclysm_patience", 5),
-        cataclysm_threshold=get_float(cfg, "cataclysm_threshold", 0.001),
-        verbose=bool(cfg.get("verbose", True)),
-        parallel_evaluation=bool(cfg.get("parallel", True)),
-        n_parallel_workers=(get_int(cfg, "n_parallel_workers", 0) or None),
-        hspice_max_parallel=get_int(cfg, "hspice_max_parallel", 4),
-        debug_log=bool(cfg.get("debug_log", False)),
-        convergence_patience=get_int(cfg, "convergence_patience", 9999),
-        convergence_threshold=get_float(cfg, "convergence_threshold", 1e-6),
-        use_adaptive_mutation=bool(cfg.get("use_adaptive_mutation", True)),
-        pm_penalty_k=get_float(cfg, "pm_penalty_k", 0.01),
-        adaptive_population=bool(cfg.get("adaptive_population", True)),
-        adaptive_target_fill_rate=get_float(cfg, "adaptive_target_fill_rate", 0.7),
-        adaptive_pop_max_ratio=get_float(cfg, "adaptive_pop_max_ratio", 5.0),
-        random_seed=cfg.get("random_seed") or None,
-    )
-
-    if flow.config.fast_mode:
-        from TheScanner import set_fast_mode
-        set_fast_mode(True)
-
-    rng = np.random.default_rng(get_int(cfg, "random_seed", 42))
-    initial_pop = [
-        flow._context.create_random_genome(flow._context, rng)
-        for _ in range(opt_config.population_size)
-    ]
-    optimizer = GeneticOptimizer(context=flow._context, objective=objective, config=opt_config)
-
-    def callback(gen, opt):
-        stats = opt.generation_stats[-1] if opt.generation_stats else {}
-        best = metrics_from_individual(opt.best_individual) if opt.best_individual else {}
-        points = []
-        for idx, ind in enumerate(getattr(opt, "population", [])[:250]):
-            row = metrics_from_individual(ind)
-            row["idx"] = idx
-            points.append(row)
-        append_event(
-            telemetry,
-            {
-                "phase": "optimize",
-                "status": "generation",
-                "generation": gen + 1,
-                "max_generations": opt_config.max_generations,
-                "progress": (gen + 1) / max(1, opt_config.max_generations),
-                "stats": stats,
-                "best": best,
-                "points": points,
-                "time": time.time(),
-            },
-        )
-        return False
 
     try:
-        result = optimizer.optimize(initial_population=initial_pop, callback=callback)
-        flow._last_result = result
-        summary = summarize_result(result)
+        # Keep the plugin on the same public API path used by AmpSys examples:
+        # AmpFlow.from_pdk(...) -> set_topology(...) -> flow.optimize(specs=...).
+        result = flow.optimize(specs=specs)
+        summary = summarize_result(result, mos_name_map)
+        validate_result_summary(summary)
         write_json(result_path, summary)
         cad = project.get("cadence", {})
         write_skill_result(result_path, skill_path, cad.get("lib", ""), cad.get("cell", ""), cad.get("view", "schematic"), project.get("settings", {}))
@@ -1055,10 +1082,6 @@ def run_optimize(project_path: Path) -> None:
             },
         )
         raise
-    finally:
-        if flow.config.fast_mode:
-            from TheScanner import set_fast_mode
-            set_fast_mode(False)
 
 
 def run_writeback(project_path: Path) -> None:
@@ -1109,7 +1132,7 @@ def run_self_test() -> None:
 def main(argv: Optional[List[str]] = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd0 = argv[0] if argv else ""
-    if should_delegate_to_core(cmd0):
+    if should_delegate_to_core(cmd0, argv):
         raise SystemExit(delegate_to_core(argv))
 
     parser = argparse.ArgumentParser(description="AmpSys headless runner")

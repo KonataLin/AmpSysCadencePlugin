@@ -207,6 +207,10 @@ procedure(ampsysApplyResultFile(resultFile)
     nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
     ampsysLog(sprintf(nil "Result file loaded: records=%d lib=%s cell=%s view=%s widthMode=%s fingerAliases=%L"
       nRecords ampsys_result_lib ampsys_result_cell ampsys_result_view ampsys_writeback_width_mode ampsys_writeback_finger_aliases))
+    when(nRecords <= 0
+      ampsysWarn(sprintf(nil "[AmpSys] Result file has 0 sizing records:\n%s\n\nRun optimization again before applying." resultFile))
+      return(nil)
+    )
     cv = ampsysCurrentCV()
     if(and(boundp('ampsys_result_lib) nequal(ampsys_result_lib ""))
     then

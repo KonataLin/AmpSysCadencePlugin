@@ -35,6 +35,8 @@ def _debugger_attached() -> bool:
 
 
 def _add_dev_paths() -> None:
+    if getattr(sys, "frozen", False):
+        return
     here = Path(__file__).resolve()
     candidates = []
     try:
