@@ -488,6 +488,7 @@ class AmpSysGUI:
         self.result_data: Dict[str, Any] = {}
         self.last_points: List[Dict[str, Any]] = []
         self.flow_status_vars: Dict[str, tk.StringVar] = {}
+        self.flow_detail_vars: Dict[str, tk.StringVar] = {}
         self.flow_status_labels: Dict[str, tk.Label] = {}
         self.flow_tracker_labels: Dict[str, tk.Label] = {}
         self.runner_log_path: Optional[Path] = None
@@ -496,6 +497,7 @@ class AmpSysGUI:
         self.status_update_after: Optional[str] = None
         self.status_var = tk.StringVar(root, "Ready")
         self.progress_var = tk.DoubleVar(root, 0.0)
+        self.bulk_current_var = tk.StringVar(root, "")
 
         self.setup_style()
         self.build_ui()
@@ -753,16 +755,21 @@ class AmpSysGUI:
         status = tk.Label(frame, textvariable=self.flow_status_vars[key], width=3, bg="#fee2e2", fg=BAD, font=(self.ui_font_family, 13, "bold"), padx=4, pady=3)
         status.grid(row=0, column=1, padx=(0, 14), sticky="n")
         self.flow_status_labels[key] = status
-        ttk.Label(frame, text=title, style="Section.TLabel").grid(row=0, column=2, sticky="w")
+        title_box = ttk.Frame(frame, style="StepBody.TFrame")
+        title_box.grid(row=0, column=2, sticky="ew")
+        ttk.Label(title_box, text=title, style="Section.TLabel").pack(anchor="w")
+        ttk.Label(title_box, textvariable=self.flow_detail_vars[key], style="MutedCard.TLabel").pack(anchor="w", pady=(2, 0))
         content = ttk.Frame(frame, style="StepBody.TFrame")
         content.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         for col in (0, 2, 4):
             content.grid_columnconfigure(col, weight=1)
         return content
 
-    def set_flow_status(self, key: str, ok: bool) -> None:
+    def set_flow_status(self, key: str, ok: bool, detail: str = "") -> None:
         if key in self.flow_status_vars:
             self.flow_status_vars[key].set(FLOW_OK if ok else FLOW_PENDING)
+        if key in self.flow_detail_vars:
+            self.flow_detail_vars[key].set(detail)
         labels = [self.flow_status_labels.get(key), self.flow_tracker_labels.get(key)]
         for label in labels:
             if not label:
@@ -866,19 +873,35 @@ class AmpSysGUI:
             return
         self.auto_fill_lut_from_cache()
         lib = self.coerce_library()
-        self.set_flow_status("library", self.cache_config_ready(lib) and self.library_ready(lib))
+        cache_config_ok = self.cache_config_ready(lib)
+        library_ok = cache_config_ok and self.library_ready(lib)
+        if not cache_config_ok:
+            library_detail = "Cache dir, NMOS name, and PMOS name are required."
+        elif library_ok:
+            library_detail = "Cache is ready."
+        else:
+            library_detail = "Cache files were not found for the selected names/corner."
+        self.set_flow_status("library", library_ok, library_detail)
 
-        self.set_flow_status("devices", not self.device_setup_issues())
+        device_issues = self.device_setup_issues()
+        mos_count = len([d for d in self.devices if d.get("type", d.get("kind", "")) in ("nmos", "pmos")])
+        device_detail = f"{mos_count} MOS ready." if not device_issues else device_issues[0].splitlines()[0]
+        self.set_flow_status("devices", not device_issues, device_detail)
 
-        self.set_flow_status("specs", not self.spec_setup_issues())
+        spec_issues = self.spec_setup_issues()
+        self.set_flow_status("specs", not spec_issues, "Specs are ready." if not spec_issues else spec_issues[0])
         telemetry = Path(self.collect_project()["telemetry_path"])
-        self.set_flow_status("run", bool(self.proc and self.proc.poll() is None) or telemetry.is_file() or Path(self.project_path.parent / "ampsys_optimize.log").is_file())
-        self.set_flow_status("results", Path(self.project_path.parent / "result.json").is_file())
+        run_ok = bool(self.proc and self.proc.poll() is None) or telemetry.is_file() or Path(self.project_path.parent / "ampsys_optimize.log").is_file()
+        run_detail = "Run is active." if self.proc and self.proc.poll() is None else ("Run log is available." if run_ok else "Not started.")
+        self.set_flow_status("run", run_ok, run_detail)
+        result_ok = Path(self.project_path.parent / "result.json").is_file()
+        self.set_flow_status("results", result_ok, "Result file is available." if result_ok else "No result yet.")
 
     def build_flow_page(self) -> None:
         page = self.main_page
         page.grid_columnconfigure(0, weight=1)
         self.flow_status_vars = {key: tk.StringVar(self.root, FLOW_PENDING) for key in ("library", "devices", "specs", "run", "results")}
+        self.flow_detail_vars = {key: tk.StringVar(self.root, "") for key in ("library", "devices", "specs", "run", "results")}
 
         flow = ttk.Frame(page, style="Shell.TFrame", padding=(18, 14, 18, 14))
         flow.grid(row=0, column=0, sticky="ew", pady=(0, 12))
@@ -921,6 +944,12 @@ class AmpSysGUI:
         ttk.Button(toolbar, text="Add MOS", command=self.add_device).pack(side="left", padx=(0, 6))
         ttk.Button(toolbar, text="Remove Selected", style="Danger.TButton", command=self.remove_selected_devices).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Apply Edit", command=self.apply_device_editor).pack(side="left", padx=6)
+        bulk = ttk.Frame(toolbar, style="StepBody.TFrame")
+        bulk.pack(side="left", padx=(18, 0))
+        ttk.Label(bulk, text="Id uA", style="MutedCard.TLabel").pack(side="left", padx=(0, 4))
+        ttk.Entry(bulk, textvariable=self.bulk_current_var, width=9).pack(side="left", padx=(0, 6))
+        ttk.Button(bulk, text="Set Selected", command=lambda: self.apply_bulk_current(selected_only=True)).pack(side="left", padx=(0, 6))
+        ttk.Button(bulk, text="Set All", command=lambda: self.apply_bulk_current(selected_only=False)).pack(side="left")
         self.warning_label = ttk.Label(toolbar, text="", style="MutedCard.TLabel")
         self.warning_label.pack(side="right")
 
@@ -962,6 +991,7 @@ class AmpSysGUI:
         self.display_field(specs, "Saturation margin", "saturation_margin", 3, 0)
         self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2)
         self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0)
+        ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=4, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=5, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=5, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=6, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
@@ -977,7 +1007,11 @@ class AmpSysGUI:
         self.conv_canvas = tk.Canvas(left, bg=CHART_BG, highlightthickness=0, height=220)
         self.conv_canvas.pack(fill="both", expand=True, pady=(8, 8))
         self.conv_canvas.bind("<Configure>", self.redraw_charts)
-        ttk.Label(left, text="Runner log", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
+        log_header = ttk.Frame(left, style="StepBody.TFrame")
+        log_header.pack(fill="x")
+        ttk.Label(log_header, text="Runner log", style="Card.TLabel", font=self.font_bold).pack(side="left")
+        ttk.Button(log_header, text="Open Log", command=self.open_current_log).pack(side="right", padx=(6, 0))
+        ttk.Button(log_header, text="Clear View", command=self.clear_log_view).pack(side="right")
         log_box = ttk.Frame(left, style="StepBody.TFrame")
         log_box.pack(fill="both", expand=False, pady=(8, 0))
         log_box.grid_columnconfigure(0, weight=1)
@@ -1076,6 +1110,32 @@ class AmpSysGUI:
             if val:
                 d["value"] = safe_float(val)
         self.refresh_device_table()
+
+    def apply_bulk_current(self, selected_only: bool) -> None:
+        current_text = self.bulk_current_var.get().strip()
+        current_uA = safe_float(current_text, 0.0)
+        if current_uA <= 0:
+            messagebox.showwarning("AmpSys", "Enter a positive Id uA value first.")
+            return
+        if selected_only:
+            selected = self.device_tree.selection()
+            if not selected:
+                messagebox.showwarning("AmpSys", "Select one or more MOS rows first, or use Set All.")
+                return
+            candidate_indices = [int(x) for x in selected]
+        else:
+            candidate_indices = list(range(len(self.devices)))
+        changed = 0
+        for idx in candidate_indices:
+            if idx < 0 or idx >= len(self.devices):
+                continue
+            dtype = self.devices[idx].get("type", self.devices[idx].get("kind", ""))
+            if dtype not in ("nmos", "pmos"):
+                continue
+            self.devices[idx]["current"] = current_uA * 1e-6
+            changed += 1
+        self.refresh_device_table()
+        self.status_var.set(f"Set Id={current_uA:g} uA for {changed} MOS device(s).")
 
     def refresh_device_table(self) -> None:
         if not hasattr(self, "device_tree"):
@@ -1240,9 +1300,8 @@ class AmpSysGUI:
             logging.exception("Could not open project in a new GUI process: %s", path)
             messagebox.showerror("AmpSys", f"Could not open project:\n{path}\n\n{exc}")
 
-    def open_workspace(self) -> None:
-        self.project_path.parent.mkdir(parents=True, exist_ok=True)
-        path = str(self.project_path.parent)
+    def open_desktop_path(self, target: Path, label: str) -> None:
+        path = str(target)
         try:
             if os.name == "nt":
                 os.startfile(path)
@@ -1260,8 +1319,63 @@ class AmpSysGUI:
                     return
             raise FileNotFoundError("No desktop opener found (xdg-open/gio/open).")
         except Exception as exc:
-            logging.exception("Could not open workspace: %s", path)
-            messagebox.showinfo("AmpSys", f"Workspace:\n{path}\n\nCould not open automatically:\n{exc}")
+            logging.exception("Could not open %s: %s", label, path)
+            messagebox.showinfo("AmpSys", f"{label}:\n{path}\n\nCould not open automatically:\n{exc}")
+
+    def open_workspace(self) -> None:
+        self.project_path.parent.mkdir(parents=True, exist_ok=True)
+        self.open_desktop_path(self.project_path.parent, "Workspace")
+
+    def open_current_log(self) -> None:
+        candidates = [
+            self.runner_log_path,
+            self.project_path.parent / "ampsys_optimize.log",
+            self.project_path.parent / "ampsys_build-library.log",
+            self.log_path,
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                self.open_desktop_path(Path(candidate), "Log")
+                return
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.log_path.touch(exist_ok=True)
+        self.open_desktop_path(self.log_path, "Log")
+
+    def clear_log_view(self) -> None:
+        if hasattr(self, "log_text"):
+            self.log_text.delete("1.0", "end")
+            self.status_var.set("Log view cleared.")
+
+    def setup_issues_for_optimize(self) -> List[str]:
+        project = self.collect_project()
+        lib = project["library"]
+        issues: List[str] = []
+        missing_lut_fields = [
+            label for key, label in (
+                ("nmos_name", "NMOS name"),
+                ("pmos_name", "PMOS name"),
+                ("cache_dir", "Cache dir"),
+            )
+            if not str(lib.get(key, "")).strip()
+        ]
+        if missing_lut_fields:
+            issues.append("Complete these LUT fields first: " + ", ".join(missing_lut_fields))
+        elif not self.library_ready(lib):
+            markers = "\n".join(str(p) for p in expected_library_markers(lib, self.project_path)[:6])
+            issues.append("LUT cache is not ready. Expected one of:\n" + markers)
+        issues.extend(self.device_setup_issues())
+        issues.extend(self.spec_setup_issues())
+        return issues
+
+    def show_setup_check(self) -> None:
+        issues = self.setup_issues_for_optimize()
+        self.update_flow_statuses()
+        if issues:
+            self.status_var.set(f"Setup check found {len(issues)} issue(s).")
+            messagebox.showwarning("AmpSys setup check", "\n\n".join(issues[:12]))
+            return
+        self.status_var.set("Setup is ready.")
+        messagebox.showinfo("AmpSys setup check", "Setup is ready to run.")
 
     def validate_before_run(self, cmd: str) -> bool:
         project = self.collect_project()
