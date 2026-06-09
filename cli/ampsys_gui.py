@@ -436,6 +436,7 @@ class AmpSysGUI:
         self.log_path = self.project_path.parent / "ampsys_gui.log"
         self.setup_logging()
         self.root.report_callback_exception = self.report_callback_exception
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.project = default_project(self.project_path)
         if self.project_path.exists():
             deep_update(self.project, read_json(self.project_path, {}))
@@ -575,6 +576,10 @@ class AmpSysGUI:
     def setup_logging(self) -> None:
         for handler in list(logging.getLogger().handlers):
             logging.getLogger().removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
         logging.basicConfig(
             filename=str(self.log_path),
             level=logging.INFO,
@@ -585,6 +590,12 @@ class AmpSysGUI:
     def report_callback_exception(self, exc_type, exc_value, exc_tb) -> None:
         logging.exception("Tk callback failed", exc_info=(exc_type, exc_value, exc_tb))
         messagebox.showerror("AmpSys GUI error", f"{exc_value}\n\nLog: {self.log_path}")
+
+    def close(self) -> None:
+        try:
+            logging.shutdown()
+        finally:
+            self.root.destroy()
 
     def bind_status_traces(self) -> None:
         for bag in (self.lib_vars, self.spec_vars, self.cfg_vars, self.top_vars):
@@ -639,6 +650,9 @@ class AmpSysGUI:
         self.root.bind_all("<MouseWheel>", self.on_mousewheel, add="+")
         self.root.bind_all("<Button-4>", self.on_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self.on_mousewheel, add="+")
+        self.root.bind_all("<Control-s>", self.handle_save_shortcut, add="+")
+        self.root.bind_all("<Control-S>", self.handle_save_shortcut, add="+")
+        self.root.bind_all("<F5>", self.handle_refresh_shortcut, add="+")
 
         self.build_flow_page()
 
@@ -691,6 +705,15 @@ class AmpSysGUI:
             delta = -int(event.delta / 120) if event.delta else 0
         if delta:
             canvas.yview_scroll(delta, "units")
+
+    def handle_save_shortcut(self, _event=None) -> str:
+        self.save_project()
+        return "break"
+
+    def handle_refresh_shortcut(self, _event=None) -> str:
+        self.refresh_results()
+        self.status_var.set("Results refreshed.")
+        return "break"
 
     def card(self, parent: tk.Widget, title: str) -> ttk.Frame:
         frame = ttk.Frame(parent, style="Card.TFrame", padding=14)
@@ -942,12 +965,15 @@ class AmpSysGUI:
         toolbar = ttk.Frame(devices, style="StepBody.TFrame")
         toolbar.grid(row=0, column=0, columnspan=6, sticky="ew")
         ttk.Button(toolbar, text="Add MOS", command=self.add_device).pack(side="left", padx=(0, 6))
+        ttk.Button(toolbar, text="Select All", command=self.select_all_devices).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Remove Selected", style="Danger.TButton", command=self.remove_selected_devices).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Apply Edit", command=self.apply_device_editor).pack(side="left", padx=6)
         bulk = ttk.Frame(toolbar, style="StepBody.TFrame")
         bulk.pack(side="left", padx=(18, 0))
         ttk.Label(bulk, text="Id uA", style="MutedCard.TLabel").pack(side="left", padx=(0, 4))
-        ttk.Entry(bulk, textvariable=self.bulk_current_var, width=9).pack(side="left", padx=(0, 6))
+        self.bulk_current_entry = ttk.Entry(bulk, textvariable=self.bulk_current_var, width=9)
+        self.bulk_current_entry.pack(side="left", padx=(0, 6))
+        self.bulk_current_entry.bind("<Return>", self.apply_bulk_current_from_entry)
         ttk.Button(bulk, text="Set Selected", command=lambda: self.apply_bulk_current(selected_only=True)).pack(side="left", padx=(0, 6))
         ttk.Button(bulk, text="Set All", command=lambda: self.apply_bulk_current(selected_only=False)).pack(side="left")
         self.warning_label = ttk.Label(toolbar, text="", style="MutedCard.TLabel")
@@ -978,7 +1004,9 @@ class AmpSysGUI:
             cell.grid(row=idx // 4, column=idx % 4, padx=(6, 8), pady=5, sticky="ew")
             cell.grid_columnconfigure(0, weight=1)
             ttk.Label(cell, text=lab, style="MutedCard.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 3))
-            ttk.Entry(cell, textvariable=self.dev_edit[key], width=30 if key == "nodes" else 16).grid(row=1, column=0, sticky="ew")
+            entry = ttk.Entry(cell, textvariable=self.dev_edit[key], width=30 if key == "nodes" else 16)
+            entry.grid(row=1, column=0, sticky="ew")
+            entry.bind("<Return>", lambda _event: self.apply_device_editor())
 
         row += 1
         specs = self.flow_section(page, "specs", "Specs & Optimization", row)
@@ -1066,6 +1094,7 @@ class AmpSysGUI:
     def add_device(self) -> None:
         self.devices.append({"name": f"M{len(self.devices)+1}", "type": "nmos", "nodes": ["D", "G", "S", "B"], "current": 10e-6, "match_group": "", "bw_factor": 1.0})
         self.refresh_device_table()
+        self.save_project_silent()
 
     def remove_selected_devices(self) -> None:
         selected = set(self.device_tree.selection())
@@ -1073,6 +1102,13 @@ class AmpSysGUI:
             return
         self.devices = [d for idx, d in enumerate(self.devices) if str(idx) not in selected]
         self.refresh_device_table()
+        self.save_project_silent()
+
+    def select_all_devices(self) -> None:
+        if not hasattr(self, "device_tree"):
+            return
+        self.device_tree.selection_set(self.device_tree.get_children())
+        self.status_var.set(f"Selected {len(self.device_tree.get_children())} row(s).")
 
     def load_device_editor(self) -> None:
         selected = self.device_tree.selection()
@@ -1110,6 +1146,7 @@ class AmpSysGUI:
             if val:
                 d["value"] = safe_float(val)
         self.refresh_device_table()
+        self.save_project_silent()
 
     def apply_bulk_current(self, selected_only: bool) -> None:
         current_text = self.bulk_current_var.get().strip()
@@ -1136,6 +1173,11 @@ class AmpSysGUI:
             changed += 1
         self.refresh_device_table()
         self.status_var.set(f"Set Id={current_uA:g} uA for {changed} MOS device(s).")
+        self.save_project_silent()
+
+    def apply_bulk_current_from_entry(self, _event=None) -> str:
+        self.apply_bulk_current(selected_only=bool(self.device_tree.selection()))
+        return "break"
 
     def refresh_device_table(self) -> None:
         if not hasattr(self, "device_tree"):
@@ -1204,6 +1246,7 @@ class AmpSysGUI:
             self.status_var.set(f"Parsed {len(devices)} devices from {path.name}{suffix}")
             self.last_parse_signature = self.current_parse_signature()
             self.update_flow_statuses()
+            self.save_project_silent()
         except Exception as exc:
             messagebox.showerror("AmpSys netlist parse failed", str(exc))
 
@@ -1288,6 +1331,15 @@ class AmpSysGUI:
         logging.info("Project saved: %s", self.project_path)
         self.status_var.set(f"Saved {self.project_path}")
         self.update_flow_statuses()
+
+    def save_project_silent(self) -> None:
+        try:
+            self.project = self.collect_project()
+            self.project_path.parent.mkdir(parents=True, exist_ok=True)
+            self.project_path.write_text(json.dumps(self.project, indent=2, ensure_ascii=False), encoding="utf-8")
+            logging.info("Project auto-saved: %s", self.project_path)
+        except Exception:
+            logging.exception("Project auto-save failed: %s", self.project_path)
 
     def load_project_dialog(self) -> None:
         path = filedialog.askopenfilename(initialdir=str(self.project_path.parent), filetypes=[("AmpSys project", "*.json"), ("All files", "*.*")])
