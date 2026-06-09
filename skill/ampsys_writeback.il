@@ -108,7 +108,7 @@ procedure(ampsysApplyParamAction(inst action)
     kind = car(action)
     ampsysLog(sprintf(nil "Apply param action: inst=%s action=%L" inst~>name action))
     cond(
-      ((equal(kind "width"))
+      (equal(kind "width")
         aliases = cadddr(action)
         if(equal(ampsys_writeback_width_mode "finger")
         then
@@ -126,16 +126,16 @@ procedure(ampsysApplyParamAction(inst action)
           inst~>name ampsys_writeback_width_mode useFinger value cadr(action) caddr(action)))
         ampsysSetBestInstParam(inst aliases value)
       )
-      ((equal(kind "length"))
+      (equal(kind "length")
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      ((equal(kind "fingers"))
+      (equal(kind "fingers")
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      ((equal(kind "multiplier"))
+      (equal(kind "multiplier")
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      ((equal(kind "value"))
+      (equal(kind "value")
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
       (t
@@ -171,7 +171,7 @@ procedure(ampsysApplyResultToCell(lib cell view)
         if(inst
         then
           foreach(pair params
-            unless(errset(ampsysApplyParamAction(inst pair))
+            unless(errset(ampsysApplyParamAction(inst pair) t)
               paramFailures = paramFailures + 1
               ampsysLog(sprintf(nil "WARN: writeback action failed: inst=%s action=%L" instName pair))
             )
