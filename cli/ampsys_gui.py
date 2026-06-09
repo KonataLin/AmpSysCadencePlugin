@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
@@ -32,6 +33,9 @@ from ampsys_runner import expected_library_markers, find_core_executable, has_co
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = Path(__file__).resolve().with_name("ampsys_runner.py")
 WORKSPACE = ROOT / "workspace"
+REPO_URL = "https://github.com/KonataLin/AmpSysCadencePlugin"
+ISSUES_URL = "https://github.com/KonataLin/AmpSysCadencePlugin/issues"
+SPONSOR_URL = "https://www.afdian.com/a/LocyDragon"
 
 BG = "#f5f7fb"
 PANEL = "#ffffff"
@@ -44,8 +48,8 @@ ACCENT = "#2563eb"
 ACCENT_2 = "#16a34a"
 WARN = "#b7791f"
 BAD = "#dc2626"
-FLOW_OK = "OK"
-FLOW_PENDING = "--"
+FLOW_OK = "✓"
+FLOW_PENDING = "×"
 
 FONT_CANDIDATES = (
     "Segoe UI",
@@ -464,6 +468,7 @@ class AmpSysGUI:
         self.result_data: Dict[str, Any] = {}
         self.last_points: List[Dict[str, Any]] = []
         self.flow_status_vars: Dict[str, tk.StringVar] = {}
+        self.flow_status_labels: Dict[str, tk.Label] = {}
         self.runner_log_path: Optional[Path] = None
         self.build_started_at = 0.0
         self.scroll_canvases: List[tk.Canvas] = []
@@ -488,7 +493,7 @@ class AmpSysGUI:
         self.font_normal = (self.ui_font_family, 11)
         self.font_small = (self.ui_font_family, 10)
         self.font_section = (self.ui_font_family, 14, "bold")
-        self.font_heading = (self.ui_font_family, 24, "bold")
+        self.font_heading = (self.ui_font_family, 23, "bold")
         self.font_bold = (self.ui_font_family, 11, "bold")
 
         for name, size, weight in (
@@ -515,10 +520,15 @@ class AmpSysGUI:
         style.configure(".", background=BG, foreground=INK, fieldbackground=PANEL, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, font=self.font_normal)
         style.configure("TFrame", background=BG)
         style.configure("Card.TFrame", background=PANEL, relief="solid", borderwidth=1)
+        style.configure("Shell.TFrame", background=PANEL, relief="solid", borderwidth=1)
+        style.configure("Step.TFrame", background=PANEL)
+        style.configure("StepBody.TFrame", background=PANEL)
         style.configure("TLabel", background=BG, foreground=INK, font=self.font_normal)
         style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=self.font_normal)
         style.configure("Card.TLabel", background=PANEL, foreground=INK, font=self.font_normal)
         style.configure("MutedCard.TLabel", background=PANEL, foreground=MUTED, font=self.font_normal)
+        style.configure("Link.TButton", background="#eaf2ff", foreground=ACCENT, borderwidth=1, padding=(12, 7), font=self.font_normal)
+        style.map("Link.TButton", background=[("active", "#dbeafe")], foreground=[("active", ACCENT)])
         style.configure("TButton", background=PANEL_2, foreground=INK, borderwidth=1, focusthickness=0, padding=(14, 8), font=self.font_normal)
         style.map("TButton", background=[("active", "#dce8f8")], foreground=[("disabled", "#98a4b5")])
         style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", font=self.font_normal)
@@ -572,21 +582,41 @@ class AmpSysGUI:
 
     def build_ui(self) -> None:
         header = tk.Frame(self.root, bg=BG)
-        header.pack(fill="x", padx=18, pady=(14, 8))
-        tk.Label(header, text="AmpSys", bg=BG, fg=INK, font=self.font_heading).pack(side="left")
-        tk.Label(header, text="Cadence schematic sizing cockpit", bg=BG, fg=MUTED, font=self.font_bold).pack(side="left", padx=(14, 0), pady=(8, 0))
-        ttk.Button(header, text="Save Project", command=self.save_project).pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="Load Project", command=self.load_project_dialog).pack(side="right", padx=(8, 0))
-        ttk.Button(header, text="Open Workspace", command=self.open_workspace).pack(side="right", padx=(8, 0))
+        header.pack(fill="x", padx=20, pady=(16, 10))
+        header.grid_columnconfigure(0, weight=1)
+        header.grid_columnconfigure(1, weight=0)
+
+        title_box = tk.Frame(header, bg=BG)
+        title_box.grid(row=0, column=0, sticky="ew")
+        tk.Label(title_box, text="AmpSys", bg=BG, fg=INK, font=self.font_heading).grid(row=0, column=0, sticky="w")
+        mode_text = "Windows LUT Builder" if self.can_build_library_here() else "Linux Cache-Only"
+        tk.Label(title_box, text=mode_text, bg="#eaf2ff", fg=ACCENT, font=self.font_bold, padx=10, pady=4).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
+        tk.Label(title_box, text="Cadence schematic sizing cockpit", bg=BG, fg=MUTED, font=self.font_bold).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        actions = tk.Frame(header, bg=BG)
+        actions.grid(row=0, column=1, sticky="e")
+        ttk.Button(actions, text="Repo", style="Link.TButton", command=lambda: self.open_url(REPO_URL)).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Issues", style="Link.TButton", command=lambda: self.open_url(ISSUES_URL)).pack(side="left", padx=6)
+        ttk.Button(actions, text="Sponsor", style="Link.TButton", command=lambda: self.open_url(SPONSOR_URL)).pack(side="left", padx=6)
+        ttk.Button(actions, text="Open Workspace", command=self.open_workspace).pack(side="left", padx=(12, 0))
+        ttk.Button(actions, text="Load Project", command=self.load_project_dialog).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Save Project", command=self.save_project).pack(side="left", padx=(8, 0))
 
         body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        body.pack(fill="both", expand=True, padx=20, pady=(0, 18))
         self.main_page = self.add_scroll_page(body)
         self.root.bind_all("<MouseWheel>", self.on_mousewheel, add="+")
         self.root.bind_all("<Button-4>", self.on_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self.on_mousewheel, add="+")
 
         self.build_flow_page()
+
+    def open_url(self, url: str) -> None:
+        try:
+            webbrowser.open_new_tab(url)
+        except Exception as exc:
+            logging.exception("Could not open URL: %s", url)
+            messagebox.showerror("AmpSys", f"Could not open link:\n{url}\n\n{exc}")
 
     def add_scroll_page(self, parent: tk.Widget) -> ttk.Frame:
         outer = ttk.Frame(parent)
@@ -638,7 +668,7 @@ class AmpSysGUI:
         return frame
 
     def field(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, width: int = 20, browse: str = "") -> ttk.Entry:
-        ttk.Label(parent, text=label, style="Muted.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
+        ttk.Label(parent, text=label, style="MutedCard.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
         ent = ttk.Entry(parent, textvariable=var, width=width)
         ent.grid(row=row, column=col + 1, padx=(0, 6), pady=8, sticky="ew")
         if browse:
@@ -653,7 +683,7 @@ class AmpSysGUI:
         return ent
 
     def combo(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, values: Iterable[str], width: int = 16) -> ttk.Combobox:
-        ttk.Label(parent, text=label, style="Muted.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
+        ttk.Label(parent, text=label, style="MutedCard.TLabel").grid(row=row, column=col, padx=(12, 6), pady=8, sticky="w")
         cb = ttk.Combobox(parent, textvariable=var, values=list(values), width=width, state="readonly")
         cb.grid(row=row, column=col + 1, padx=(0, 8), pady=8, sticky="ew")
         return cb
@@ -664,21 +694,28 @@ class AmpSysGUI:
         return cb
 
     def flow_section(self, parent: tk.Widget, key: str, title: str, row: int) -> ttk.Frame:
-        frame = ttk.Frame(parent, padding=(8, 12, 8, 12))
-        frame.grid(row=row, column=0, sticky="ew")
+        frame = ttk.Frame(parent, style="Shell.TFrame", padding=(16, 14, 16, 14))
+        frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         frame.grid_columnconfigure(1, weight=1)
-        ttk.Label(frame, textvariable=self.flow_status_vars[key], font=(self.ui_font_family, 15, "bold")).grid(row=0, column=0, padx=(0, 10), sticky="n")
-        ttk.Label(frame, text=title, font=self.font_section).grid(row=0, column=1, sticky="w")
-        content = ttk.Frame(frame)
-        content.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+        status = tk.Label(frame, textvariable=self.flow_status_vars[key], width=3, bg="#fee2e2", fg=BAD, font=(self.ui_font_family, 13, "bold"), padx=4, pady=3)
+        status.grid(row=0, column=0, rowspan=2, padx=(0, 14), sticky="n")
+        self.flow_status_labels[key] = status
+        ttk.Label(frame, text=title, style="Card.TLabel", font=self.font_section).grid(row=0, column=1, sticky="w")
+        content = ttk.Frame(frame, style="StepBody.TFrame")
+        content.grid(row=1, column=1, sticky="ew", pady=(10, 0))
         for col in (1, 3, 5):
             content.grid_columnconfigure(col, weight=1)
-        ttk.Separator(frame).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(14, 0))
         return content
 
     def set_flow_status(self, key: str, ok: bool) -> None:
         if key in self.flow_status_vars:
             self.flow_status_vars[key].set(FLOW_OK if ok else FLOW_PENDING)
+        label = self.flow_status_labels.get(key)
+        if label:
+            if ok:
+                label.configure(bg="#dcfce7", fg="#15803d")
+            else:
+                label.configure(bg="#fee2e2", fg=BAD)
 
     def can_build_library_here(self) -> bool:
         return os.name == "nt"
@@ -788,8 +825,8 @@ class AmpSysGUI:
         page.grid_columnconfigure(0, weight=1)
         self.flow_status_vars = {key: tk.StringVar(self.root, FLOW_PENDING) for key in ("library", "devices", "specs", "run", "results")}
 
-        flow = ttk.Frame(page, padding=(8, 10, 8, 6))
-        flow.grid(row=0, column=0, sticky="ew")
+        flow = ttk.Frame(page, style="Shell.TFrame", padding=(16, 12, 16, 12))
+        flow.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         flow_items = [
             ("library", "LUT Cache"),
             ("devices", "Devices"),
@@ -798,11 +835,11 @@ class AmpSysGUI:
             ("results", "Results"),
         ]
         for idx, (key, label) in enumerate(flow_items):
-            ttk.Label(flow, textvariable=self.flow_status_vars[key], font=self.font_bold).grid(row=0, column=idx * 2, padx=(0, 5))
-            ttk.Label(flow, text=label, style="Muted.TLabel").grid(row=0, column=idx * 2 + 1, padx=(0, 22))
+            ttk.Label(flow, textvariable=self.flow_status_vars[key], style="Card.TLabel", font=self.font_bold).grid(row=0, column=idx * 2, padx=(0, 6))
+            ttk.Label(flow, text=label, style="MutedCard.TLabel").grid(row=0, column=idx * 2 + 1, padx=(0, 24))
 
         row = 1
-        lut = self.flow_section(page, "library", "LUT cache", row)
+        lut = self.flow_section(page, "library", "LUT Cache", row)
         self.field(lut, "Cache dir", self.lib_vars.vars["cache_dir"], 0, 0, width=58, browse="dir")
         self.field(lut, "NMOS name", self.lib_vars.vars["nmos_name"], 1, 0)
         self.field(lut, "PMOS name", self.lib_vars.vars["pmos_name"], 1, 2)
@@ -815,13 +852,13 @@ class AmpSysGUI:
             ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=6, column=0, columnspan=2, padx=12, pady=8, sticky="ew")
         row += 1
 
-        devices = self.flow_section(page, "devices", "Device currents", row)
-        toolbar = ttk.Frame(devices)
+        devices = self.flow_section(page, "devices", "Device Currents", row)
+        toolbar = ttk.Frame(devices, style="StepBody.TFrame")
         toolbar.grid(row=0, column=0, columnspan=6, sticky="ew")
         ttk.Button(toolbar, text="Add MOS", command=self.add_device).pack(side="left", padx=(0, 6))
         ttk.Button(toolbar, text="Remove Selected", style="Danger.TButton", command=self.remove_selected_devices).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Apply Editor", command=self.apply_device_editor).pack(side="left", padx=6)
-        self.warning_label = ttk.Label(toolbar, text="", style="Muted.TLabel")
+        self.warning_label = ttk.Label(toolbar, text="", style="MutedCard.TLabel")
         self.warning_label.pack(side="right")
 
         cols = ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")
@@ -842,11 +879,11 @@ class AmpSysGUI:
         self.dev_edit = {k: tk.StringVar(self.root, "") for k in ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")}
         labels = [("Name", "name"), ("Type", "type"), ("Nodes", "nodes"), ("Id uA", "current_uA"), ("Match", "match_group"), ("BW", "bw"), ("R/C", "value")]
         for idx, (lab, key) in enumerate(labels):
-            ttk.Label(devices, text=lab, style="Muted.TLabel").grid(row=2 + (idx // 4) * 2, column=idx % 4, padx=6, pady=(4, 2), sticky="w")
+            ttk.Label(devices, text=lab, style="MutedCard.TLabel").grid(row=2 + (idx // 4) * 2, column=idx % 4, padx=6, pady=(4, 2), sticky="w")
             ttk.Entry(devices, textvariable=self.dev_edit[key], width=30 if key == "nodes" else 16).grid(row=3 + (idx // 4) * 2, column=idx % 4, padx=6, pady=(0, 8), sticky="ew")
 
         row += 1
-        specs = self.flow_section(page, "specs", "Specs and run", row)
+        specs = self.flow_section(page, "specs", "Specs And Run", row)
         self.display_field(specs, "Gain min dB", "gain_min", 0, 0)
         self.display_field(specs, "GBW MHz", "gbw", 0, 2, scale=1e6)
         self.display_field(specs, "PM min deg", "pm_min", 1, 0)
@@ -859,34 +896,34 @@ class AmpSysGUI:
         ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=5, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=5, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=6, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
-        ttk.Label(specs, textvariable=self.status_var, style="Muted.TLabel").grid(row=7, column=0, columnspan=4, padx=12, sticky="w")
+        ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=7, column=0, columnspan=4, padx=12, sticky="w")
 
         row += 1
-        viz = self.flow_section(page, "run", "Run visualization and log", row)
+        viz = self.flow_section(page, "run", "Run Visualization And Log", row)
         viz.grid_columnconfigure(0, weight=1)
         viz.grid_columnconfigure(1, weight=1)
-        left = ttk.Frame(viz)
+        left = ttk.Frame(viz, style="StepBody.TFrame")
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ttk.Label(left, text="Convergence", font=self.font_bold).pack(anchor="w")
+        ttk.Label(left, text="Convergence", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
         self.conv_canvas = tk.Canvas(left, bg=CHART_BG, highlightthickness=0, height=220)
         self.conv_canvas.pack(fill="both", expand=True, pady=(8, 8))
-        ttk.Label(left, text="Runner log", font=self.font_bold).pack(anchor="w")
+        ttk.Label(left, text="Runner log", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
         self.log_text = tk.Text(left, bg="#ffffff", fg=INK, insertbackground=INK, height=10, relief="solid", bd=1, wrap="word")
         self.log_text.pack(fill="both", expand=False, pady=(8, 0))
-        right = ttk.Frame(viz)
+        right = ttk.Frame(viz, style="StepBody.TFrame")
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ttk.Label(right, text="Population metric web", font=self.font_bold).pack(anchor="w")
+        ttk.Label(right, text="Population metric web", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
         self.web_canvas = tk.Canvas(right, bg=CHART_BG, highlightthickness=0, height=390)
         self.web_canvas.pack(fill="both", expand=True, pady=(8, 0))
 
         row += 1
-        results = self.flow_section(page, "results", "Results and Cadence writeback", row)
-        result_top = ttk.Frame(results)
+        results = self.flow_section(page, "results", "Results And Cadence Writeback", row)
+        result_top = ttk.Frame(results, style="StepBody.TFrame")
         result_top.grid(row=0, column=0, sticky="ew", columnspan=8)
         ttk.Button(result_top, text="Refresh Result", command=self.refresh_results).pack(side="left", padx=(0, 8))
         ttk.Button(result_top, text="Generate SKILL Writeback", command=self.generate_writeback).pack(side="left", padx=8)
         ttk.Button(result_top, text="Confirm and Apply in Cadence", style="Accent.TButton", command=self.request_cadence_apply).pack(side="left", padx=8)
-        self.metrics_label = ttk.Label(result_top, text="", style="Muted.TLabel")
+        self.metrics_label = ttk.Label(result_top, text="", style="MutedCard.TLabel")
         self.metrics_label.pack(side="right")
         cols = ("name", "type", "W_um", "L_um", "fingers", "Id_uA", "gm_mS", "Vgs", "Vds", "Vdsat")
         self.result_tree = ttk.Treeview(results, columns=cols, show="headings", height=8)
@@ -1468,9 +1505,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    args = parse_args()
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     root = tk.Tk()
-    app = AmpSysGUI(root, parse_args())
+    app = AmpSysGUI(root, args)
     root.mainloop()
 
 

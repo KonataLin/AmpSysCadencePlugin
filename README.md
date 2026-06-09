@@ -76,3 +76,8 @@ load(strcat(getShellEnvVar("AMPSYS_PLUGIN_ROOT") "/skill/ampsys_init.il"))
 
 详细说明见 [Usage.md](Usage.md)。
 
+## 链接
+
+- 项目主页：[KonataLin/AmpSysCadencePlugin](https://github.com/KonataLin/AmpSysCadencePlugin)
+- 问题反馈：[GitHub Issues](https://github.com/KonataLin/AmpSysCadencePlugin/issues)
+- 赞助支持：[爱发电 LocyDragon](https://www.afdian.com/a/LocyDragon)

@@ -200,3 +200,9 @@ bash /opt/AmpSysCadencePlugin/install_linux.sh \
   /opt/AmpSysCadencePlugin \
   /path/to/project/.cdsinit
 ```
+
+## 9. 反馈和支持
+
+- 项目主页：https://github.com/KonataLin/AmpSysCadencePlugin
+- 问题反馈：https://github.com/KonataLin/AmpSysCadencePlugin/issues
+- 赞助支持：https://www.afdian.com/a/LocyDragon
