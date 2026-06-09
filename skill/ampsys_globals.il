@@ -33,16 +33,18 @@ procedure(ampsysOnWindows()
 procedure(ampsysGuiExecutable()
   let((candidate)
     candidate = ampsys_gui_exe
-    when(and(candidate nequal(candidate "") isFile(candidate))
-      return(candidate)
-    )
-    if(ampsysOnWindows()
+    if(and(candidate nequal(candidate "") isFile(candidate))
     then
-      candidate = strcat(ampsys_root "/gui/windows_amd64/ampsys_gui/ampsys_gui.exe")
+      candidate
     else
-      candidate = strcat(ampsys_root "/gui/linux_x86_64/ampsys_gui/ampsys_gui")
+      if(ampsysOnWindows()
+      then
+        candidate = strcat(ampsys_root "/gui/windows_amd64/ampsys_gui/ampsys_gui.exe")
+      else
+        candidate = strcat(ampsys_root "/gui/linux_x86_64/ampsys_gui/ampsys_gui")
+      )
+      if(isFile(candidate) then candidate else nil)
     )
-    if(isFile(candidate) then candidate else nil)
   )
 )
 

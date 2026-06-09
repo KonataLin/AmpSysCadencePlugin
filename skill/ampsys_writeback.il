@@ -146,7 +146,7 @@ procedure(ampsysApplyParamAction(inst action)
 )
 
 procedure(ampsysApplyResultToCell(lib cell view)
-  let((cv applied missed nRecords)
+  prog((cv applied missed nRecords)
     nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
     ampsysLog(sprintf(nil "Apply result to cell start: lib=%s cell=%s view=%s records=%d"
       lib cell view nRecords))
@@ -188,7 +188,7 @@ procedure(ampsysApplyResultToCell(lib cell view)
 )
 
 procedure(ampsysApplyResultFile(resultFile)
-  let((cv lib cell view nRecords)
+  prog((cv lib cell view nRecords)
     ampsysLog(sprintf(nil "Apply result file start: %s" resultFile))
     unless(isFile(resultFile)
       ampsysWarn(sprintf(nil "[AmpSys] No result to apply yet.\nExpected file:\n%s\n\nRun optimization in the AmpSys GUI, then click Confirm and Apply in Cadence." resultFile))
@@ -231,7 +231,7 @@ procedure(ampsysApplyResultFile(resultFile)
 )
 
 procedure(ampsysApplyLastResult()
-  let((cv runDir resultFile)
+  prog((cv runDir resultFile)
     ampsysLog("Menu action: Apply Last Result")
     cv = ampsysCurrentCV()
     unless(cv

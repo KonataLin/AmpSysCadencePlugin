@@ -36,7 +36,7 @@ procedure(ampsysGetTermOrder(libName cellName)
 )
 
 procedure(ampsysExportNetlist(lib cell view outFile)
-  let((cv port nDev skipLibs subcktPins)
+  prog((cv port nDev skipLibs subcktPins)
     ampsysLog(sprintf(nil "Export netlist start: lib=%s cell=%s view=%s outFile=%s" lib cell view outFile))
     cv = dbOpenCellViewByType(lib cell view nil "r")
     unless(cv
@@ -179,7 +179,7 @@ procedure(ampsysLaunchGUI(projectFile netlistFile lib cell view)
 )
 
 procedure(ampsysExtractCurrentSchematic()
-  let((cv lib cell view runDir netlist project)
+  prog((cv lib cell view runDir netlist project)
     ampsysLog("Menu action: Extract Current Schematic")
     cv = ampsysCurrentCV()
     unless(cv
