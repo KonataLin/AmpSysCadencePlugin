@@ -1,0 +1,8 @@
+# GUI/runtime wrapper dependencies for source-mode fallback.
+# Hardened release users normally only need Python with tkinter; the private
+# AmpSys core is bundled into core/<os>_<arch>/ampsys_core(.exe).
+numpy
+scipy
+sympy
+psutil
+numba

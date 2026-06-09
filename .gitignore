@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+workspace/
+libraries/
+*.log
+*.request
+.pytest_cache/
+.mypy_cache/
+*.build/
+*.dist/
+*.onefile-build/
