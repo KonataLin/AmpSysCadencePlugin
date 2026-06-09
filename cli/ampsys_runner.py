@@ -530,6 +530,20 @@ def prepare_existing_library_cache(lib: Dict[str, Any], project_path: Path) -> O
 
     manifest = cache_dir / "manifest.json"
     if manifest.is_file():
+        if not model_stem(lib.get("model_path")):
+            if direct_pair:
+                key = direct_pair[0].name[len("nmos_"):-len(".pkl")]
+                stem = infer_model_stem_from_cache_key(key, lib)
+                if stem:
+                    lib["model_path"] = str(cache_dir / f"{stem}.lib")
+            else:
+                try:
+                    manifest_payload = json.loads(manifest.read_text(encoding="utf-8-sig"))
+                    saved_model = (manifest_payload.get("library") or {}).get("model_path")
+                    if saved_model:
+                        lib["model_path"] = saved_model
+                except Exception:
+                    pass
         return manifest
     if not direct_pair:
         return None

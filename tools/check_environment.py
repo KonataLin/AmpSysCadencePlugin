@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -41,11 +42,18 @@ def python_command_works(cmd: list[str]) -> bool:
         return False
 
 
+def split_command(text: str) -> list[str]:
+    parts = shlex.split(text, posix=(os.name != "nt"))
+    if os.name == "nt":
+        parts = [part.strip().strip('"').strip("'") for part in parts]
+    return parts
+
+
 def py_command() -> list[str]:
     candidates: list[list[str]] = []
     configured = os.environ.get("AMPSYS_PYCMD", "").strip()
     if configured:
-        candidates.append(shlex.split(configured, posix=(os.name != "nt")))
+        candidates.append(split_command(configured))
 
     if os.name == "nt":
         candidates.extend([["py", "-3"], [sys.executable], ["python"]])
@@ -87,8 +95,14 @@ def write_first_available(payload: dict[str, object], candidates: list[Path]) ->
             errors.append({"path": str(path), "error": str(exc)})
     fallback = Path.home() / "ampsys_environment.log"
     payload["log_fallback_errors"] = errors
-    fallback.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return fallback
+    try:
+        fallback.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        return fallback
+    except Exception as exc:
+        errors.append({"path": str(fallback), "error": str(exc)})
+    tmp_fallback = Path(tempfile.gettempdir()) / "ampsys_environment.log"
+    tmp_fallback.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return tmp_fallback
 
 
 def main() -> int:

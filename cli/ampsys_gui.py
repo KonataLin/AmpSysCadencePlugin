@@ -106,11 +106,18 @@ def python_command_works(cmd: List[str]) -> bool:
         return False
 
 
+def split_command(text: str) -> List[str]:
+    parts = shlex.split(text, posix=(os.name != "nt"))
+    if os.name == "nt":
+        parts = [part.strip().strip('"').strip("'") for part in parts]
+    return parts
+
+
 def py_command() -> List[str]:
     candidates: List[List[str]] = []
     configured = os.environ.get("AMPSYS_PYCMD", "").strip()
     if configured:
-        candidates.append(shlex.split(configured, posix=(os.name != "nt")))
+        candidates.append(split_command(configured))
     if os.name == "nt":
         candidates.extend([["py", "-3"], [sys.executable], ["python"]])
     else:
@@ -2046,8 +2053,14 @@ class AmpSysGUI:
         if not self.generate_writeback():
             return
         request_path = self.project_path.parent / "apply.request"
-        request_path.write_text(str(time.time()), encoding="utf-8")
+        try:
+            request_path.write_text(str(time.time()), encoding="utf-8")
+        except Exception as exc:
+            logging.exception("Could not write Cadence apply request: %s", request_path)
+            messagebox.showerror("AmpSys", f"Could not write apply request:\n{request_path}\n\n{exc}\n\nLog: {self.log_path}")
+            return
         msg = f"Apply request written:\n{request_path}\n\nIf this GUI was launched from Cadence, the SKILL timer will apply it. Otherwise use AmpSys -> Apply Last Result."
+        logging.info("Cadence apply request written: %s", request_path)
         messagebox.showinfo("AmpSys", msg)
 
 
