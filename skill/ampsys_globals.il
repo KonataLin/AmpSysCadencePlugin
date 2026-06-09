@@ -21,9 +21,18 @@ unless(ampsys_pycmd
   ampsys_pycmd = "py -3"
 )
 
+procedure(ampsysOnWindows()
+  or(getShellEnvVar("ComSpec") getShellEnvVar("COMSPEC") equal(getShellEnvVar("OS") "Windows_NT"))
+)
+
+defvar(ampsys_launch_prefix getShellEnvVar("AMPSYS_LAUNCH_PREFIX"))
+unless(ampsys_launch_prefix
+  ampsys_launch_prefix = ""
+)
+
 defvar(ampsys_launch_suffix getShellEnvVar("AMPSYS_LAUNCH_SUFFIX"))
 unless(ampsys_launch_suffix
-  ampsys_launch_suffix = " &"
+  ampsys_launch_suffix = ""
 )
 
 defvar(ampsys_current_lib "")
@@ -43,7 +52,7 @@ procedure(ampsysTimestamp()
 procedure(ampsysEnsureDir(dir)
   unless(isDir(dir)
     unless(car(errset(createDir(dir)))
-      if(getShellEnvVar("ComSpec")
+      if(ampsysOnWindows()
       then
         errset(system(sprintf(nil "mkdir \"%s\"" dir)))
       else
@@ -124,7 +133,7 @@ procedure(ampsysDeleteFile(path)
   when(isFile(path)
     ampsysLog(sprintf(nil "Deleting file: %s" path))
     unless(car(errset(deleteFile(path)))
-      if(getShellEnvVar("ComSpec")
+      if(ampsysOnWindows()
       then
         errset(system(sprintf(nil "del /q \"%s\"" path)))
       else
@@ -170,5 +179,5 @@ procedure(ampsysSetCurrentFromCV(cv)
   )
 )
 
-ampsysLog(sprintf(nil "Globals loaded. root=%s work=%s cli=%s pycmd=%s launch_suffix=%s"
-  ampsys_root ampsys_work ampsys_cli ampsys_pycmd ampsys_launch_suffix))
+ampsysLog(sprintf(nil "Globals loaded. root=%s work=%s cli=%s pycmd=%s launch_prefix=%s launch_suffix=%s"
+  ampsys_root ampsys_work ampsys_cli ampsys_pycmd ampsys_launch_prefix ampsys_launch_suffix))

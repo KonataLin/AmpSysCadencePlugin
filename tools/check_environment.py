@@ -74,6 +74,23 @@ def py_command() -> list[str]:
     return [sys.executable] if sys.executable else ["python3"]
 
 
+def write_first_available(payload: dict[str, object], candidates: list[Path]) -> Path:
+    errors: list[dict[str, str]] = []
+    for path in candidates:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if errors:
+                payload["log_fallback_errors"] = errors
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            return path
+        except Exception as exc:
+            errors.append({"path": str(path), "error": str(exc)})
+    fallback = Path.home() / "ampsys_environment.log"
+    payload["log_fallback_errors"] = errors
+    fallback.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return fallback
+
+
 def main() -> int:
     payload: dict[str, object] = {
         "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -116,9 +133,9 @@ def main() -> int:
         payload["status"] = "error"
         payload["error"] = str(exc)
 
-    LOG.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    log_path = write_first_available(payload, [LOG, ROOT / "workspace" / "ampsys_environment.log"])
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-    print(f"\n[AmpSys] Environment log: {LOG}")
+    print(f"\n[AmpSys] Environment log: {log_path}")
     return 0 if payload["status"] == "ok" else 1
 
 

@@ -17,6 +17,16 @@ CORE_BIN="$PLUGIN_ROOT/core/linux_x86_64/ampsys_core"
 if [[ -f "$CORE_BIN" ]]; then
   chmod +x "$CORE_BIN" || true
 fi
+for path in "$PLUGIN_ROOT/cli" "$PLUGIN_ROOT/skill" "$PLUGIN_ROOT/tools" "$PLUGIN_ROOT/assets" "$PLUGIN_ROOT/core"; do
+  if [[ -e "$path" ]]; then
+    chmod -R a+rX "$path" || true
+  fi
+done
+chmod a+rx "$PLUGIN_ROOT" || true
+mkdir -p "$PLUGIN_ROOT/workspace"
+chmod -R a+rwX "$PLUGIN_ROOT/workspace" || true
+touch "$PLUGIN_ROOT/ampsys_environment.log" 2>/dev/null || true
+chmod a+rw "$PLUGIN_ROOT/ampsys_environment.log" 2>/dev/null || true
 
 python_ok() {
   local candidate="${1:-}"
@@ -131,6 +141,7 @@ echo "[AmpSys] Linux install complete"
 echo "  Plugin: $PLUGIN_ROOT"
 echo "  Engine: $ENGINE_ROOT"
 echo "  .cdsinit: $CDSINIT"
+echo "  Workspace: $PLUGIN_ROOT/workspace"
 echo "  Python command in Cadence: py -3"
 echo "  Environment check: py -3 $PLUGIN_ROOT/tools/check_environment.py"
 echo "  Current shell refresh: source ~/.bashrc"

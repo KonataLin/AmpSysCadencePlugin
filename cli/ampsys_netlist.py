@@ -108,6 +108,23 @@ def parse_param_tokens(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
     return plain, params
 
 
+def logical_spice_lines(text: str) -> Iterable[str]:
+    current = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("*") or line.startswith("//"):
+            continue
+        if line.startswith("+"):
+            extra = line[1:].strip()
+            current = f"{current} {extra}".strip() if current else extra
+            continue
+        if current:
+            yield current
+        current = line
+    if current:
+        yield current
+
+
 def classify_instance(
     first_token: str,
     plain_tokens: List[str],
@@ -175,18 +192,7 @@ def parse_netlist(
     devices: List[DeviceRecord] = []
     warnings: List[str] = []
 
-    continuation = ""
-    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("*") or line.startswith("//"):
-            continue
-        if line.startswith("+"):
-            continuation += " " + line[1:].strip()
-            continue
-        if continuation:
-            line = continuation + " " + line
-            continuation = ""
-
+    for line in logical_spice_lines(path.read_text(encoding="utf-8", errors="ignore")):
         lower = line.lower()
         if lower.startswith(".subckt"):
             parts = line.split()

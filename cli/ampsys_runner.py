@@ -868,7 +868,16 @@ def write_skill_result(
                 + ")"
             )
         lines.append(f"  list({skill_quote(dev.get('name', ''))} list({' '.join(actions)}))")
-    for name, value in (data.get("passives", {}) or {}).items():
+    raw_passives = data.get("passives", {}) or {}
+    if isinstance(raw_passives, dict):
+        passive_items = raw_passives.items()
+    elif isinstance(raw_passives, list):
+        passive_items = ((item.get("name", ""), item.get("value", 0.0)) for item in raw_passives if isinstance(item, dict))
+    else:
+        passive_items = []
+    for name, value in passive_items:
+        if not name:
+            continue
         pval = fmt_passive(name, float(value or 0.0))
         action = "list(" + " ".join([skill_quote("value"), skill_quote(pval), skill_string_list(passive_aliases)]) + ")"
         lines.append(f"  list({skill_quote(name)} list({action}))")
