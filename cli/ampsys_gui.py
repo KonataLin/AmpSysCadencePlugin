@@ -307,7 +307,7 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "config": {
             "population_size": 40,
             "max_generations": 30,
-            "verbose": True,
+            "verbose": False,
             "parallel": True,
             "print_details": False,
             "enable_kvl_check": True,
@@ -719,6 +719,7 @@ class AmpSysGUI:
         actions = tk.Frame(header, bg=PANEL)
         actions.grid(row=0, column=2, sticky="e", padx=(0, 16), pady=(14, 5))
         ttk.Button(actions, text="Open Workspace", command=self.open_workspace).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Open Log", command=self.open_current_log).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Load Project", command=self.load_project_dialog).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Save Project", command=self.save_project).pack(side="left", padx=(8, 0))
 
@@ -1545,7 +1546,7 @@ class AmpSysGUI:
         project["specs"]["enable_vds_iteration"] = True
         project["config"] = self.coerce_config()
         project["config"]["fast_mode"] = True
-        project["config"]["verbose"] = True
+        project["config"]["verbose"] = False
         project["settings"] = self.coerce_settings()
         project["devices"] = self.devices
         project["passives"] = []
@@ -1973,7 +1974,7 @@ class AmpSysGUI:
     def redraw_charts(self, _event=None) -> None:
         if not hasattr(self, "conv_canvas") or not hasattr(self, "web_canvas"):
             return
-        if self.telemetry_events:
+        if self.telemetry_events or self.result_data:
             self.draw_charts()
         else:
             self.draw_empty_charts()
@@ -1987,6 +1988,8 @@ class AmpSysGUI:
     def draw_charts(self) -> None:
         gen_events = [e for e in self.telemetry_events if e.get("status") == "generation"]
         fitness = [safe_float(e.get("best", {}).get("fitness"), 0.0) for e in gen_events]
+        if not fitness and self.result_data:
+            fitness = [safe_float(self.result_data.get("best_fitness"), 0.0)]
         self.draw_line(self.conv_canvas, fitness)
         self.draw_metric_web(self.web_canvas, self.last_points)
 
@@ -2024,6 +2027,8 @@ class AmpSysGUI:
         axes = [("gain", "Gain"), ("gbw", "GBW"), ("pm", "PM"), ("power", "Power"), ("noise", "Noise"), ("fitness", "Fit")]
         canvas.create_rectangle(0, 0, w, h, fill=CHART_BG, outline="")
         if not points:
+            if self.draw_result_metric_summary(canvas, w, h, pad):
+                return
             canvas.create_text(pad, pad, anchor="nw", fill=MUTED, text="Waiting for population points...")
             return
         xs = [pad + i * (w - 2 * pad) / max(1, len(axes) - 1) for i in range(len(axes))]
@@ -2067,6 +2072,34 @@ class AmpSysGUI:
         canvas.create_line(*best_coords, fill=ACCENT_2, width=3)
         canvas.create_text(pad, 18, anchor="nw", fill=INK, text=f"{len(points)} individuals, bright line = current best", font=self.font_bold)
 
+    def draw_result_metric_summary(self, canvas: tk.Canvas, w: int, h: int, pad: int) -> bool:
+        metrics = self.result_data.get("metrics", {}) if isinstance(self.result_data, dict) else {}
+        if not metrics:
+            return False
+        fitness = safe_float(self.result_data.get("best_fitness"), 0.0)
+        values = [
+            ("Gain", min(1.0, max(0.0, safe_float(metrics.get("dc_gain"), 0.0) / 100.0)), f"{safe_float(metrics.get('dc_gain'), 0.0):.1f} dB"),
+            ("GBW", min(1.0, max(0.0, math.log10(max(1.0, safe_float(metrics.get("gbw"), 0.0))) / 10.0)), f"{safe_float(metrics.get('gbw'), 0.0)/1e6:.2f} MHz"),
+            ("PM", min(1.0, max(0.0, safe_float(metrics.get("pm"), 0.0) / 90.0)), f"{safe_float(metrics.get('pm'), 0.0):.1f} deg"),
+            ("Power", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("power"), 0.0) / 1e-3)), f"{safe_float(metrics.get('power'), 0.0)*1e6:.1f} uW"),
+            ("Noise", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("noise"), 0.0) / 1e-6)), f"{safe_float(metrics.get('noise'), 0.0):.2g}"),
+            ("Fit", min(1.0, max(0.0, fitness)), f"{fitness:.4g}"),
+        ]
+        xs = [pad + i * (w - 2 * pad) / max(1, len(values) - 1) for i in range(len(values))]
+        coords: List[float] = []
+        for x, (label, norm, text) in zip(xs, values):
+            canvas.create_line(x, pad, x, h - pad, fill=LINE)
+            canvas.create_text(x, h - pad + 18, text=label, fill=MUTED, font=self.font_small)
+            canvas.create_text(x, h - pad + 36, text=text, fill=MUTED, font=self.font_small)
+            y = h - pad - norm * (h - 2 * pad)
+            coords.extend([x, y])
+        if len(coords) >= 4:
+            canvas.create_line(*coords, fill=ACCENT_2, width=3)
+            for x, y in zip(coords[0::2], coords[1::2]):
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=ACCENT_2, outline="")
+        canvas.create_text(pad, 18, anchor="nw", fill=INK, text="Final result metrics", font=self.font_bold)
+        return True
+
     def mix_color(self, a: str, b: str, t: float) -> str:
         t = max(0.0, min(1.0, t))
         ar, ag, ab = int(a[1:3], 16), int(a[3:5], 16), int(a[5:7], 16)
@@ -2098,6 +2131,7 @@ class AmpSysGUI:
                 fmt_si(d.get("Vds", 0)),
                 fmt_si(d.get("Vdsat", 0)),
             ))
+        self.draw_charts()
 
     def generate_writeback(self, show_message: bool = False) -> bool:
         self.save_project()

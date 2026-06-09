@@ -720,14 +720,14 @@ def create_flow(project: Dict[str, Any]):
         "cache_dir": cache_dir,
         "temp_dir": temp_dir,
         "force_rescan": bool(lib.get("force_rescan", False)),
-        "verbose": bool(run_cfg.get("verbose", True)),
+        "verbose": bool(run_cfg.get("verbose", False)),
     }
     supported = set(inspect.signature(AmpFlow.from_pdk).parameters)
     flow = AmpFlow.from_pdk(**{k: v for k, v in from_pdk_kwargs.items() if k in supported})
     flow.config = AmpFlowConfig(
         population_size=get_int(run_cfg, "population_size", 50),
         max_generations=get_int(run_cfg, "max_generations", 20),
-        verbose=bool(run_cfg.get("verbose", True)),
+        verbose=bool(run_cfg.get("verbose", False)),
         parallel=bool(run_cfg.get("parallel", True)),
         print_details=bool(run_cfg.get("print_details", False)),
         enable_kvl_check=bool(run_cfg.get("enable_kvl_check", True)),

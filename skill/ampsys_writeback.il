@@ -163,17 +163,27 @@ procedure(ampsysApplyResultToCell(lib cell view)
     applied = 0
     missed = 0
     foreach(entry ampsys_result_devices
-      let((inst params instName)
+      let((inst params instName paramFailures)
         instName = car(entry)
         params = cadr(entry)
+        paramFailures = 0
         inst = ampsysFindInstance(cv instName)
         if(inst
         then
           foreach(pair params
-            ampsysApplyParamAction(inst pair)
+            unless(errset(ampsysApplyParamAction(inst pair))
+              paramFailures = paramFailures + 1
+              ampsysLog(sprintf(nil "WARN: writeback action failed: inst=%s action=%L" instName pair))
+            )
           )
-          applied = applied + 1
-          printf("[AmpSys] Applied %s\n" instName)
+          if(paramFailures > 0
+          then
+            missed = missed + 1
+            ampsysLog(sprintf(nil "WARN: instance %s had %d writeback action failure(s)" instName paramFailures))
+          else
+            applied = applied + 1
+            printf("[AmpSys] Applied %s\n" instName)
+          )
         else
           missed = missed + 1
           ampsysLog(sprintf(nil "WARN: instance %s not found during writeback" instName))
@@ -183,6 +193,10 @@ procedure(ampsysApplyResultToCell(lib cell view)
     dbSave(cv)
     ampsysLog(sprintf(nil "Writeback complete: applied=%d missed=%d saved=%s/%s/%s"
       applied missed lib cell view))
+    when(missed > 0
+      ampsysWarn(sprintf(nil "[AmpSys] Writeback finished with %d applied and %d missed or failed record(s).\n\nCheck ampsys_skill.log in the run workspace." applied missed))
+      return(nil)
+    )
     return(t)
   )
 )
