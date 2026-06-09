@@ -183,7 +183,7 @@ procedure(ampsysApplyResultToCell(lib cell view)
     dbSave(cv)
     ampsysLog(sprintf(nil "Writeback complete: applied=%d missed=%d saved=%s/%s/%s"
       applied missed lib cell view))
-    t
+    return(t)
   )
 )
 
@@ -226,7 +226,7 @@ procedure(ampsysApplyResultFile(resultFile)
       cell = cv~>cellName
       view = cv~>viewName
     )
-    ampsysApplyResultToCell(lib cell view)
+    return(ampsysApplyResultToCell(lib cell view))
   )
 )
 
@@ -242,7 +242,7 @@ procedure(ampsysApplyLastResult()
     runDir = ampsysProjectDir(cv~>libName cv~>cellName)
     resultFile = strcat(runDir "/ampsys_result.il")
     ampsysLog(sprintf(nil "Apply Last Result paths: runDir=%s resultFile=%s" runDir resultFile))
-    ampsysApplyResultFile(resultFile)
+    return(ampsysApplyResultFile(resultFile))
   )
 )
 

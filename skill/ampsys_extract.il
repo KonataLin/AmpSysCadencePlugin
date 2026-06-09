@@ -148,7 +148,7 @@ procedure(ampsysExportNetlist(lib cell view outFile)
     close(port)
     dbClose(cv)
     ampsysLog(sprintf(nil "Export netlist done: instances=%d outFile=%s" nDev outFile))
-    t
+    return(t)
   )
 )
 
