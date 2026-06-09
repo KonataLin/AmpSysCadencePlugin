@@ -40,6 +40,8 @@ class DeviceRecord:
     current: Optional[float] = None
     match_group: str = ""
     params: Dict[str, str] = None
+    raw_nodes: List[str] = None
+    terminal_order: str = ""
 
     def to_json(self) -> Dict:
         payload = asdict(self)
@@ -65,6 +67,35 @@ def normalize_model_set(items: Iterable[str]) -> set:
     return {str(x).strip().lower() for x in items if str(x).strip()}
 
 
+TERMINAL_ALIASES = {
+    "D": "D",
+    "DRAIN": "D",
+    "G": "G",
+    "GATE": "G",
+    "S": "S",
+    "SOURCE": "S",
+    "B": "B",
+    "BULK": "B",
+    "BODY": "B",
+    "SUB": "B",
+    "SUBSTRATE": "B",
+}
+
+
+def normalize_terminal_order(value: str) -> List[str]:
+    tokens = [x.strip().upper() for x in re.split(r"[\s,;/|]+", str(value or "")) if x.strip()]
+    roles = [TERMINAL_ALIASES.get(tok, tok) for tok in tokens]
+    if len(roles) != 4 or set(roles) != {"D", "G", "S", "B"}:
+        return ["D", "G", "S", "B"]
+    return roles
+
+
+def apply_terminal_order(nodes: List[str], order_value: str) -> Tuple[List[str], str]:
+    order = normalize_terminal_order(order_value)
+    mapped = {role: nodes[idx] for idx, role in enumerate(order[:4])}
+    return [mapped["D"], mapped["G"], mapped["S"], mapped["B"]], " ".join(order)
+
+
 def parse_param_tokens(tokens: List[str]) -> Tuple[List[str], Dict[str, str]]:
     plain: List[str] = []
     params: Dict[str, str] = {}
@@ -83,6 +114,7 @@ def classify_instance(
     params: Dict[str, str],
     nmos_models: set,
     pmos_models: set,
+    terminal_orders: Optional[Dict[str, str]] = None,
 ) -> Optional[DeviceRecord]:
     if not first_token or first_token.startswith("."):
         return None
@@ -91,7 +123,8 @@ def classify_instance(
     if prefix == "M" or len(plain_tokens) >= 5:
         if len(plain_tokens) < 5:
             return None
-        nodes = plain_tokens[:4]
+        raw_nodes = plain_tokens[:4]
+        nodes = list(raw_nodes)
         model = plain_tokens[4]
         model_key = model.lower()
         if model_key in pmos_models or model_key in {"pmos", "pch", "pfet", "p"}:
@@ -102,12 +135,17 @@ def classify_instance(
             return None
         else:
             kind = "unknown_mos"
+        term_order = ""
+        if kind in {"nmos", "pmos"}:
+            nodes, term_order = apply_terminal_order(raw_nodes, (terminal_orders or {}).get(kind, "D G S B"))
         return DeviceRecord(
             name=first_token,
             kind=kind,
             nodes=nodes,
             model=model,
             params=params,
+            raw_nodes=raw_nodes,
+            terminal_order=term_order,
         )
 
     if prefix in {"R", "C"} and len(plain_tokens) >= 3:
@@ -129,6 +167,7 @@ def parse_netlist(
     path: Path,
     nmos_models: Iterable[str] = (),
     pmos_models: Iterable[str] = (),
+    terminal_orders: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[str], List[DeviceRecord], List[str]]:
     nmos_set = normalize_model_set(nmos_models)
     pmos_set = normalize_model_set(pmos_models)
@@ -161,7 +200,7 @@ def parse_netlist(
             continue
         first = tokens[0]
         plain, params = parse_param_tokens(tokens[1:])
-        rec = classify_instance(first, plain, params, nmos_set, pmos_set)
+        rec = classify_instance(first, plain, params, nmos_set, pmos_set, terminal_orders)
         if rec is not None:
             devices.append(rec)
 
@@ -188,11 +227,14 @@ def parse_to_json(
     output: str,
     nmos: str = "",
     pmos: str = "",
+    nmos_terminal_order: str = "D G S B",
+    pmos_terminal_order: str = "D G S B",
 ) -> None:
     pins, devices, warnings = parse_netlist(
         Path(netlist),
         [x.strip() for x in nmos.split(",")],
         [x.strip() for x in pmos.split(",")],
+        {"nmos": nmos_terminal_order, "pmos": pmos_terminal_order},
     )
     payload = {
         "netlist": str(Path(netlist).resolve()),
@@ -211,8 +253,10 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--nmos", default="")
     parser.add_argument("--pmos", default="")
+    parser.add_argument("--nmos-terminal-order", default="D G S B")
+    parser.add_argument("--pmos-terminal-order", default="D G S B")
     args = parser.parse_args()
-    parse_to_json(args.netlist, args.output, args.nmos, args.pmos)
+    parse_to_json(args.netlist, args.output, args.nmos, args.pmos, args.nmos_terminal_order, args.pmos_terminal_order)
 
 
 if __name__ == "__main__":

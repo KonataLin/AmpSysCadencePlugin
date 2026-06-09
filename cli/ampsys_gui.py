@@ -27,7 +27,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
 
 from ampsys_netlist import parse_netlist
-from ampsys_runner import expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, resolve_engine_root, resolve_hspice_cmd
+from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, resolve_engine_root, resolve_hspice_cmd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +49,9 @@ ACCENT_2 = "#10b981"
 ACCENT_3 = "#f59e0b"
 WARN = "#b7791f"
 BAD = "#dc2626"
+GOOD_BG = "#ecfdf5"
+BAD_BG = "#fff1f2"
+NEUTRAL_BG = "#ffffff"
 FLOW_OK = "OK"
 FLOW_PENDING = "NO"
 
@@ -190,7 +193,7 @@ def fmt_si(value: Any, scale: float = 1.0, digits: int = 5) -> str:
 
 def read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return default
 
@@ -303,6 +306,7 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "adaptive_target_fill_rate": 0.7,
             "adaptive_pop_max_ratio": 5.0,
         },
+        "settings": dict(DEFAULT_WRITEBACK_SETTINGS),
         "devices": [],
         "passives": [],
     }
@@ -369,6 +373,12 @@ def sanitize_loaded_project(project: Dict[str, Any], project_path: Path) -> bool
             changed = True
 
     lib = project.setdefault("library", {})
+    settings = project.setdefault("settings", {})
+    for key, value in DEFAULT_WRITEBACK_SETTINGS.items():
+        if settings.get(key) in (None, ""):
+            settings[key] = value
+            changed = True
+
     temp_dir = str(project_dir / "tmp")
     if lib.get("temp_dir") != temp_dir:
         lib["temp_dir"] = temp_dir
@@ -444,6 +454,7 @@ class AmpSysGUI:
         self.project.setdefault("library", {})
         self.project.setdefault("specs", {})
         self.project.setdefault("config", {})
+        self.project.setdefault("settings", dict(DEFAULT_WRITEBACK_SETTINGS))
         self.project.setdefault("devices", [])
         self.project.setdefault("passives", [])
 
@@ -470,6 +481,7 @@ class AmpSysGUI:
         self.lib_vars = VarBag(root, self.project["library"])
         self.spec_vars = VarBag(root, self.project["specs"])
         self.cfg_vars = VarBag(root, self.project["config"])
+        self.settings_vars = VarBag(root, self.project["settings"])
         self.top_vars = VarBag(root, {
             "engine_root": self.project.get("engine_root", str(DEFAULT_ENGINE_ROOT)),
             "netlist_path": self.project.get("netlist_path", ""),
@@ -499,13 +511,15 @@ class AmpSysGUI:
         self.status_var = tk.StringVar(root, "Ready")
         self.progress_var = tk.DoubleVar(root, 0.0)
         self.bulk_current_var = tk.StringVar(root, "")
+        self.field_entries: Dict[str, ttk.Entry] = {}
+        self.settings_visible = tk.BooleanVar(root, False)
 
         self.setup_style()
         self.build_ui()
         self.bind_status_traces()
         self.refresh_device_table()
         self.refresh_results()
-        if args.netlist and not self.devices:
+        if args.netlist:
             self.parse_netlist_from_gui()
         logging.info("AmpSys GUI started. project=%s root=%s", self.project_path, ROOT)
 
@@ -564,6 +578,9 @@ class AmpSysGUI:
         style.configure("Danger.TButton", background="#fee2e2", foreground=BAD, font=self.font_normal)
         style.map("Danger.TButton", background=[("active", "#fecaca")])
         style.configure("TEntry", fieldbackground="#ffffff", foreground=INK, insertcolor=INK, bordercolor=LINE, padding=7, font=self.font_normal)
+        style.configure("Valid.TEntry", fieldbackground=GOOD_BG, foreground=INK, insertcolor=INK, bordercolor=ACCENT_2, padding=7, font=self.font_normal)
+        style.configure("Invalid.TEntry", fieldbackground=BAD_BG, foreground=INK, insertcolor=INK, bordercolor=BAD, padding=7, font=self.font_normal)
+        style.configure("Neutral.TEntry", fieldbackground=NEUTRAL_BG, foreground=INK, insertcolor=INK, bordercolor=LINE, padding=7, font=self.font_normal)
         style.configure("TCombobox", fieldbackground="#ffffff", foreground=INK, bordercolor=LINE, arrowcolor=INK, font=self.font_normal)
         style.configure("TCheckbutton", background=BG, foreground=INK, font=self.font_normal)
         style.configure("Card.TCheckbutton", background=PANEL, foreground=INK, font=self.font_normal)
@@ -598,7 +615,7 @@ class AmpSysGUI:
             self.root.destroy()
 
     def bind_status_traces(self) -> None:
-        for bag in (self.lib_vars, self.spec_vars, self.cfg_vars, self.top_vars):
+        for bag in (self.lib_vars, self.spec_vars, self.cfg_vars, self.settings_vars, self.top_vars):
             for var in bag.vars.values():
                 var.trace_add("write", self.schedule_status_update)
 
@@ -721,7 +738,7 @@ class AmpSysGUI:
         label.grid(row=0, column=0, columnspan=8, sticky="w", pady=(0, 10))
         return frame
 
-    def field(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, width: int = 20, browse: str = "") -> ttk.Entry:
+    def field(self, parent: tk.Widget, label: str, var: tk.Variable, row: int, col: int, width: int = 20, browse: str = "", field_key: str = "") -> ttk.Entry:
         cell = ttk.Frame(parent, style="StepBody.TFrame")
         span = 4 if width >= 40 and col == 0 else 2
         cell.grid(row=row, column=col, columnspan=span, padx=(6, 8), pady=6, sticky="ew")
@@ -729,6 +746,8 @@ class AmpSysGUI:
         ttk.Label(cell, text=label, style="MutedCard.TLabel").grid(row=0, column=0, columnspan=2, pady=(0, 3), sticky="w")
         ent = ttk.Entry(cell, textvariable=var, width=width)
         ent.grid(row=1, column=0, padx=(0, 6 if browse else 0), sticky="ew")
+        if field_key:
+            self.field_entries[field_key] = ent
         if browse:
             def choose() -> None:
                 initial = dialog_initial_dir(var.get(), ROOT)
@@ -801,6 +820,70 @@ class AmpSysGUI:
                 label.configure(bg="#dcfce7", fg="#15803d")
             else:
                 label.configure(bg="#fee2e2", fg=BAD)
+
+    def set_entry_state(self, field_key: str, state: str) -> None:
+        entry = self.field_entries.get(field_key)
+        if not entry:
+            return
+        style = {
+            "ok": "Valid.TEntry",
+            "bad": "Invalid.TEntry",
+            "neutral": "Neutral.TEntry",
+        }.get(state, "Neutral.TEntry")
+        try:
+            entry.configure(style=style)
+        except Exception:
+            pass
+
+    def text_is_positive(self, value: Any) -> bool:
+        return bool(str(value or "").strip()) and safe_float(value, 0.0) > 0
+
+    def text_is_nonnegative(self, value: Any) -> bool:
+        return bool(str(value or "").strip()) and safe_float(value, -1.0) >= 0
+
+    def terminal_order_valid(self, value: Any) -> bool:
+        aliases = {
+            "D": "D", "DRAIN": "D",
+            "G": "G", "GATE": "G",
+            "S": "S", "SOURCE": "S",
+            "B": "B", "BULK": "B", "BODY": "B", "SUB": "B", "SUBSTRATE": "B",
+        }
+        tokens = [x.strip().upper() for x in re.split(r"[\s,;/|]+", str(value or "")) if x.strip()]
+        roles = [aliases.get(tok, tok) for tok in tokens]
+        return len(roles) == 4 and set(roles) == {"D", "G", "S", "B"}
+
+    def update_field_styles(self) -> None:
+        lib = self.coerce_library()
+        library_ok = self.cache_config_ready(lib) and self.library_ready(lib)
+        cache_text = str(self.lib_vars.get("cache_dir", "")).strip()
+        self.set_entry_state("library.cache_dir", "ok" if library_ok else ("bad" if cache_text else "neutral"))
+        self.set_entry_state("library.nmos_name", "ok" if str(lib.get("nmos_name", "")).strip() else "bad")
+        self.set_entry_state("library.pmos_name", "ok" if str(lib.get("pmos_name", "")).strip() else "bad")
+        self.set_entry_state("library.model_lib", "ok" if str(lib.get("model_lib", "")).strip() else "bad")
+        self.set_entry_state("library.temperature", "ok" if str(self.lib_vars.get("temperature", "")).strip() else "bad")
+        self.set_entry_state("library.process_vdd", "ok" if self.text_is_positive(self.lib_vars.get("process_vdd", "")) else "bad")
+        if self.can_build_library_here():
+            model_text = str(lib.get("model_path", "")).strip()
+            model_ok = bool(model_text) and Path(model_text).expanduser().is_file()
+            self.set_entry_state("library.model_path", "ok" if model_ok else ("bad" if model_text else "neutral"))
+            hspice_text = str(self.lib_vars.get("hspice_dir", "")).strip()
+            self.set_entry_state("library.hspice_dir", "ok" if hspice_text else "neutral")
+
+        for key in ("gain_min", "gbw", "pm_min", "load_cap"):
+            text = str(self.spec_vars.get(key, "")).strip()
+            self.set_entry_state(f"specs.{key}", "ok" if self.text_is_positive(text) else ("neutral" if not text else "bad"))
+        for key in ("V_in_cm", "V_out_cm", "saturation_margin"):
+            text = str(self.spec_vars.get(key, "")).strip()
+            self.set_entry_state(f"specs.{key}", "ok" if self.text_is_nonnegative(text) else ("neutral" if not text else "bad"))
+        self.set_entry_state("config.population_size", "ok" if safe_int(self.cfg_vars.get("population_size"), 0) > 0 else "bad")
+        self.set_entry_state("config.max_generations", "ok" if safe_int(self.cfg_vars.get("max_generations"), 0) > 0 else "bad")
+
+        for key in ("nmos_terminal_order", "pmos_terminal_order"):
+            self.set_entry_state(f"settings.{key}", "ok" if self.terminal_order_valid(self.settings_vars.get(key, "")) else "bad")
+        for key in ("width_aliases", "length_aliases", "finger_aliases", "passive_value_aliases"):
+            self.set_entry_state(f"settings.{key}", "ok" if split_csv(str(self.settings_vars.get(key, "")).replace(" ", ",")) else "bad")
+        self.set_entry_state("settings.multiplier_aliases", "ok" if str(self.settings_vars.get("multiplier_aliases", "")).strip() else "neutral")
+        self.set_entry_state("settings.multiplier_value", "ok" if str(self.settings_vars.get("multiplier_value", "")).strip() else "neutral")
 
     def can_build_library_here(self) -> bool:
         return os.name == "nt"
@@ -903,6 +986,25 @@ class AmpSysGUI:
             issues.append("Generations must be a positive integer.")
         return issues
 
+    def settings_setup_issues(self) -> List[str]:
+        issues: List[str] = []
+        if not self.terminal_order_valid(self.settings_vars.get("nmos_terminal_order", "")):
+            issues.append("NMOS terminal order must contain exactly D, G, S, B once.")
+        if not self.terminal_order_valid(self.settings_vars.get("pmos_terminal_order", "")):
+            issues.append("PMOS terminal order must contain exactly D, G, S, B once.")
+        settings = self.settings_vars.as_strings()
+        for key, label in (
+            ("width_aliases", "Width aliases"),
+            ("length_aliases", "Length aliases"),
+            ("finger_aliases", "Finger aliases"),
+            ("passive_value_aliases", "Passive value aliases"),
+        ):
+            if not split_csv(str(settings.get(key, "")).replace(" ", ",")):
+                issues.append(f"{label} cannot be empty.")
+        if str(settings.get("width_mode", "auto")).lower() not in {"auto", "finger", "total"}:
+            issues.append("Width writeback must be auto, finger, or total.")
+        return issues
+
     def update_flow_statuses(self) -> None:
         if not self.flow_status_vars:
             return
@@ -923,7 +1025,7 @@ class AmpSysGUI:
         device_detail = f"{mos_count} MOS ready." if not device_issues else device_issues[0].splitlines()[0]
         self.set_flow_status("devices", not device_issues, device_detail)
 
-        spec_issues = self.spec_setup_issues()
+        spec_issues = self.spec_setup_issues() + self.settings_setup_issues()
         self.set_flow_status("specs", not spec_issues, "Specs are ready." if not spec_issues else spec_issues[0])
         telemetry = Path(self.collect_project()["telemetry_path"])
         run_ok = bool(self.proc and self.proc.poll() is None) or telemetry.is_file() or Path(self.project_path.parent / "ampsys_optimize.log").is_file()
@@ -931,6 +1033,7 @@ class AmpSysGUI:
         self.set_flow_status("run", run_ok, run_detail)
         result_ok = Path(self.project_path.parent / "result.json").is_file()
         self.set_flow_status("results", result_ok, "Result file is available." if result_ok else "No result yet.")
+        self.update_field_styles()
 
     def build_flow_page(self) -> None:
         page = self.main_page
@@ -961,15 +1064,15 @@ class AmpSysGUI:
 
         row = 1
         lut = self.flow_section(page, "library", "LUT Cache", row)
-        self.field(lut, "Cache dir", self.lib_vars.vars["cache_dir"], 0, 0, width=58, browse="dir")
-        self.field(lut, "NMOS name", self.lib_vars.vars["nmos_name"], 1, 0)
-        self.field(lut, "PMOS name", self.lib_vars.vars["pmos_name"], 1, 2)
-        self.field(lut, "Corner/lib", self.lib_vars.vars["model_lib"], 2, 0)
-        self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2)
-        self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0)
+        self.field(lut, "Cache dir", self.lib_vars.vars["cache_dir"], 0, 0, width=58, browse="dir", field_key="library.cache_dir")
+        self.field(lut, "NMOS name", self.lib_vars.vars["nmos_name"], 1, 0, field_key="library.nmos_name")
+        self.field(lut, "PMOS name", self.lib_vars.vars["pmos_name"], 1, 2, field_key="library.pmos_name")
+        self.field(lut, "Corner/lib", self.lib_vars.vars["model_lib"], 2, 0, field_key="library.model_lib")
+        self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2, field_key="library.temperature")
+        self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0, field_key="library.process_vdd")
         if self.can_build_library_here():
-            self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file")
-            self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir")
+            self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
+            self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
             ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=6, column=0, columnspan=2, padx=12, pady=8, sticky="ew")
         row += 1
 
@@ -1029,13 +1132,50 @@ class AmpSysGUI:
         self.display_field(specs, "V in cm opt", "V_in_cm", 2, 0)
         self.display_field(specs, "V out cm opt", "V_out_cm", 2, 2)
         self.display_field(specs, "Sat margin opt", "saturation_margin", 3, 0)
-        self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2)
-        self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0)
+        self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2, field_key="config.population_size")
+        self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0, field_key="config.max_generations")
         ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=4, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=5, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=5, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
         ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=6, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
         ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=7, column=0, columnspan=4, padx=12, sticky="w")
+
+        row += 1
+        settings = ttk.Frame(page, style="Shell.TFrame", padding=(18, 14, 18, 14))
+        settings.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        settings.grid_columnconfigure(1, weight=1)
+        self.settings_toggle_text = tk.StringVar(self.root, "Show Settings")
+        ttk.Label(settings, text="Settings", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(settings, text="Defaults cover normal CDF termOrder and common MOS CDF names.", style="MutedCard.TLabel").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Button(settings, textvariable=self.settings_toggle_text, command=self.toggle_settings).grid(row=0, column=2, sticky="e")
+        self.settings_body = ttk.Frame(settings, style="StepBody.TFrame")
+        self.settings_body.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        for col in (0, 2, 4):
+            self.settings_body.grid_columnconfigure(col, weight=1)
+        self.field(self.settings_body, "NMOS terminal order", self.settings_vars.vars["nmos_terminal_order"], 0, 0, field_key="settings.nmos_terminal_order")
+        self.field(self.settings_body, "PMOS terminal order", self.settings_vars.vars["pmos_terminal_order"], 0, 2, field_key="settings.pmos_terminal_order")
+        self.combo(self.settings_body, "Width writeback", self.settings_vars.vars["width_mode"], 0, 4, ("auto", "finger", "total"))
+        self.field(self.settings_body, "Width aliases", self.settings_vars.vars["width_aliases"], 1, 0, width=34, field_key="settings.width_aliases")
+        self.field(self.settings_body, "Length aliases", self.settings_vars.vars["length_aliases"], 1, 2, width=34, field_key="settings.length_aliases")
+        self.field(self.settings_body, "Finger aliases", self.settings_vars.vars["finger_aliases"], 2, 0, width=34, field_key="settings.finger_aliases")
+        self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
+        self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
+        self.field(self.settings_body, "Passive value aliases", self.settings_vars.vars["passive_value_aliases"], 3, 2, width=34, field_key="settings.passive_value_aliases")
+        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
+        term_cols = ("name", "type", "model", "raw", "order", "dgbs")
+        self.term_tree = self.tree_with_scrollbars(self.settings_body, 5, 6, term_cols, height=5)
+        for col, text, width in [
+            ("name", "Name", 100),
+            ("type", "Type", 76),
+            ("model", "Model", 120),
+            ("raw", "Raw pins", 250),
+            ("order", "Order", 100),
+            ("dgbs", "D/G/S/B used by AmpSys", 330),
+        ]:
+            self.term_tree.heading(col, text=text)
+            self.term_tree.column(col, width=width, minwidth=width, stretch=(col in {"raw", "dgbs"}))
+        if not self.settings_visible.get():
+            self.settings_body.grid_remove()
 
         row += 1
         viz = self.flow_section(page, "run", "Live Convergence", row)
@@ -1076,7 +1216,7 @@ class AmpSysGUI:
         ttk.Button(result_top, text="Confirm and Apply in Cadence", style="Accent.TButton", command=self.request_cadence_apply).pack(side="left", padx=8)
         self.metrics_label = ttk.Label(result_top, text="", style="MutedCard.TLabel")
         self.metrics_label.pack(side="right")
-        cols = ("name", "type", "W_um", "L_um", "fingers", "Id_uA", "gm_mS", "Vgs", "Vds", "Vdsat")
+        cols = ("name", "type", "W_total_um", "W_finger_um", "L_um", "fingers", "Id_uA", "gm_mS", "Vgs", "Vds", "Vdsat")
         self.result_tree = self.tree_with_scrollbars(results, 1, 8, cols, height=8)
         for col in cols:
             self.result_tree.heading(col, text=col)
@@ -1101,7 +1241,38 @@ class AmpSysGUI:
             var = self.spec_vars.vars[key]
             var.set(fmt_si(var.get(), scale))
             setattr(var, "_ampsys_scale", scale)
-        self.field(parent, label, self.spec_vars.vars[key], row, col)
+        self.field(parent, label, self.spec_vars.vars[key], row, col, field_key=f"specs.{key}")
+
+    def toggle_settings(self) -> None:
+        visible = not self.settings_visible.get()
+        self.settings_visible.set(visible)
+        if hasattr(self, "settings_body"):
+            if visible:
+                self.settings_body.grid()
+                self.settings_toggle_text.set("Hide Settings")
+            else:
+                self.settings_body.grid_remove()
+                self.settings_toggle_text.set("Show Settings")
+        self.refresh_terminal_table()
+
+    def refresh_terminal_table(self) -> None:
+        if not hasattr(self, "term_tree"):
+            return
+        self.term_tree.delete(*self.term_tree.get_children())
+        for d in self.devices:
+            dtype = d.get("type", d.get("kind", ""))
+            if dtype not in ("nmos", "pmos", "unknown_mos"):
+                continue
+            raw = d.get("raw_nodes") or d.get("nodes", [])
+            nodes = d.get("nodes", [])
+            self.term_tree.insert("", "end", values=(
+                d.get("name", ""),
+                dtype,
+                d.get("model", ""),
+                " ".join(raw),
+                d.get("terminal_order", ""),
+                " ".join(nodes),
+            ))
 
     def add_device(self) -> None:
         self.devices.append({"name": f"M{len(self.devices)+1}", "type": "nmos", "nodes": ["D", "G", "S", "B"], "current": 10e-6, "match_group": "", "bw_factor": 1.0})
@@ -1215,13 +1386,22 @@ class AmpSysGUI:
             else:
                 text = f"{len(self.devices)} devices. Required nets: VDD GND Vin Vout. Vb_* optional bias."
             self.warning_label.config(text=text)
+        self.refresh_terminal_table()
         self.update_flow_statuses()
 
     def current_parse_signature(self) -> str:
+        path_text = str(self.top_vars.get("netlist_path", "")).strip()
+        try:
+            netlist_mtime = str(Path(path_text).stat().st_mtime_ns) if path_text else ""
+        except Exception:
+            netlist_mtime = ""
         return "|".join([
-            str(self.top_vars.get("netlist_path", "")),
+            path_text,
+            netlist_mtime,
             str(self.lib_vars.get("nmos_name", "")),
             str(self.lib_vars.get("pmos_name", "")),
+            str(self.settings_vars.get("nmos_terminal_order", "")),
+            str(self.settings_vars.get("pmos_terminal_order", "")),
         ])
 
     def should_auto_reparse_netlist(self) -> bool:
@@ -1240,7 +1420,16 @@ class AmpSysGUI:
             messagebox.showerror("AmpSys", f"Netlist not found:\n{path}")
             return
         try:
-            pins, devices, warnings = parse_netlist(path, split_csv(self.lib_vars.get("nmos_name")), split_csv(self.lib_vars.get("pmos_name")))
+            settings = self.coerce_settings()
+            pins, devices, warnings = parse_netlist(
+                path,
+                split_csv(self.lib_vars.get("nmos_name")),
+                split_csv(self.lib_vars.get("pmos_name")),
+                {
+                    "nmos": settings.get("nmos_terminal_order", "D G S B"),
+                    "pmos": settings.get("pmos_terminal_order", "D G S B"),
+                },
+            )
             old_by_name = {d.get("name"): d for d in self.devices}
             merged = []
             for rec in devices:
@@ -1284,6 +1473,7 @@ class AmpSysGUI:
         project["config"] = self.coerce_config()
         project["config"]["fast_mode"] = True
         project["config"]["verbose"] = True
+        project["settings"] = self.coerce_settings()
         project["devices"] = self.devices
         project["passives"] = []
         return project
@@ -1339,6 +1529,17 @@ class AmpSysGUI:
                 out[k] = safe_int(val) if str(val).strip() else None
             else:
                 out[k] = safe_float(val)
+        return out
+
+    def coerce_settings(self) -> Dict[str, Any]:
+        out = dict(DEFAULT_WRITEBACK_SETTINGS)
+        for key, value in self.settings_vars.as_strings().items():
+            text = str(value).strip() if value is not None else ""
+            if text:
+                out[key] = text
+        out["width_mode"] = str(out.get("width_mode", "auto")).strip().lower()
+        if out["width_mode"] not in {"auto", "finger", "total"}:
+            out["width_mode"] = "auto"
         return out
 
     def save_project(self) -> None:
@@ -1433,6 +1634,7 @@ class AmpSysGUI:
             issues.append("LUT cache is not ready. Expected one of:\n" + markers)
         issues.extend(self.device_setup_issues())
         issues.extend(self.spec_setup_issues())
+        issues.extend(self.settings_setup_issues())
         return issues
 
     def show_setup_check(self) -> None:
@@ -1510,6 +1712,11 @@ class AmpSysGUI:
             spec_issues = self.spec_setup_issues()
             if spec_issues:
                 messagebox.showwarning("AmpSys", "Specs are incomplete:\n\n" + "\n\n".join(spec_issues))
+                self.update_flow_statuses()
+                return False
+            settings_issues = self.settings_setup_issues()
+            if settings_issues:
+                messagebox.showwarning("AmpSys", "Settings are incomplete:\n\n" + "\n\n".join(settings_issues))
                 self.update_flow_statuses()
                 return False
         return True
@@ -1765,6 +1972,7 @@ class AmpSysGUI:
                 d.get("name", ""),
                 d.get("type", ""),
                 fmt_si(d.get("W", 0), 1e-6),
+                fmt_si(d.get("W_finger", 0), 1e-6),
                 fmt_si(d.get("L", 0), 1e-6),
                 d.get("fingers", ""),
                 fmt_si(d.get("Id", 0), 1e-6),
