@@ -730,6 +730,20 @@ class AmpSysGUI:
         cb.grid(row=row, column=col, padx=12, pady=7, sticky="w")
         return cb
 
+    def tree_with_scrollbars(self, parent: tk.Widget, row: int, columnspan: int, columns: Iterable[str], height: int, selectmode: str = "browse") -> ttk.Treeview:
+        box = ttk.Frame(parent, style="StepBody.TFrame")
+        box.grid(row=row, column=0, columnspan=columnspan, sticky="nsew", pady=(8, 6))
+        box.grid_columnconfigure(0, weight=1)
+        box.grid_rowconfigure(0, weight=1)
+        tree = ttk.Treeview(box, columns=tuple(columns), show="headings", selectmode=selectmode, height=height)
+        yscroll = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
+        xscroll = ttk.Scrollbar(box, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        return tree
+
     def flow_section(self, parent: tk.Widget, key: str, title: str, row: int) -> ttk.Frame:
         frame = ttk.Frame(parent, style="Shell.TFrame", padding=(18, 16, 18, 16))
         frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
@@ -911,7 +925,7 @@ class AmpSysGUI:
         self.warning_label.pack(side="right")
 
         cols = ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")
-        self.device_tree = ttk.Treeview(devices, columns=cols, show="headings", selectmode="extended", height=8)
+        self.device_tree = self.tree_with_scrollbars(devices, 1, 6, cols, height=8, selectmode="extended")
         for col, text, width in [
             ("name", "Name", 100),
             ("type", "Type", 74),
@@ -923,7 +937,6 @@ class AmpSysGUI:
         ]:
             self.device_tree.heading(col, text=text)
             self.device_tree.column(col, width=width, minwidth=width, stretch=(col == "nodes"))
-        self.device_tree.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(8, 6))
         self.device_tree.bind("<<TreeviewSelect>>", lambda _e: self.load_device_editor())
         self.dev_edit = {k: tk.StringVar(self.root, "") for k in ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")}
         labels = [("Name", "name"), ("Type", "type"), ("Nodes", "nodes"), ("Id uA", "current_uA"), ("Match", "match_group"), ("BW", "bw"), ("R/C", "value")]
@@ -963,14 +976,22 @@ class AmpSysGUI:
         ttk.Label(left, text="Convergence", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
         self.conv_canvas = tk.Canvas(left, bg=CHART_BG, highlightthickness=0, height=220)
         self.conv_canvas.pack(fill="both", expand=True, pady=(8, 8))
+        self.conv_canvas.bind("<Configure>", self.redraw_charts)
         ttk.Label(left, text="Runner log", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
-        self.log_text = tk.Text(left, bg="#ffffff", fg=INK, insertbackground=INK, height=10, relief="solid", bd=1, wrap="word")
-        self.log_text.pack(fill="both", expand=False, pady=(8, 0))
+        log_box = ttk.Frame(left, style="StepBody.TFrame")
+        log_box.pack(fill="both", expand=False, pady=(8, 0))
+        log_box.grid_columnconfigure(0, weight=1)
+        self.log_text = tk.Text(log_box, bg="#ffffff", fg=INK, insertbackground=INK, height=10, relief="solid", bd=1, wrap="word")
+        log_scroll = ttk.Scrollbar(log_box, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scroll.grid(row=0, column=1, sticky="ns")
         right = ttk.Frame(viz, style="StepBody.TFrame")
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         ttk.Label(right, text="Population metric web", style="Card.TLabel", font=self.font_bold).pack(anchor="w")
         self.web_canvas = tk.Canvas(right, bg=CHART_BG, highlightthickness=0, height=390)
         self.web_canvas.pack(fill="both", expand=True, pady=(8, 0))
+        self.web_canvas.bind("<Configure>", self.redraw_charts)
 
         row += 1
         results = self.flow_section(page, "results", "Results & Cadence Writeback", row)
@@ -982,11 +1003,10 @@ class AmpSysGUI:
         self.metrics_label = ttk.Label(result_top, text="", style="MutedCard.TLabel")
         self.metrics_label.pack(side="right")
         cols = ("name", "type", "W_um", "L_um", "fingers", "Id_uA", "gm_mS", "Vgs", "Vds", "Vdsat")
-        self.result_tree = ttk.Treeview(results, columns=cols, show="headings", height=8)
+        self.result_tree = self.tree_with_scrollbars(results, 1, 8, cols, height=8)
         for col in cols:
             self.result_tree.heading(col, text=col)
             self.result_tree.column(col, width=110, minwidth=90, stretch=True)
-        self.result_tree.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         row += 1
         footer = ttk.Frame(page, style="Shell.TFrame", padding=(18, 12, 18, 12))
@@ -1213,8 +1233,12 @@ class AmpSysGUI:
         path = filedialog.askopenfilename(initialdir=str(self.project_path.parent), filetypes=[("AmpSys project", "*.json"), ("All files", "*.*")])
         if not path:
             return
-        messagebox.showinfo("AmpSys", "The selected project will open in a new GUI process.")
-        subprocess.Popen(py_command() + [str(Path(__file__).resolve()), "--project", path], close_fds=True)
+        try:
+            subprocess.Popen(py_command() + [str(Path(__file__).resolve()), "--project", path], close_fds=True)
+            self.status_var.set(f"Opening project: {path}")
+        except Exception as exc:
+            logging.exception("Could not open project in a new GUI process: %s", path)
+            messagebox.showerror("AmpSys", f"Could not open project:\n{path}\n\n{exc}")
 
     def open_workspace(self) -> None:
         self.project_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1334,7 +1358,19 @@ class AmpSysGUI:
         env["AMPSYS_ENGINE_ROOT"] = self.top_vars.get("engine_root")
         env["AMPSYS_PLUGIN_ROOT"] = str(ROOT)
         logging.info("Starting runner: %s", command)
-        self.proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT), env=env)
+        try:
+            self.proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT), env=env)
+        except Exception as exc:
+            logging.exception("Runner launch failed")
+            if self.runner_log_path:
+                with self.runner_log_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\nRunner launch failed: {exc}\n")
+            self.status_var.set("Runner launch failed")
+            self.active_cmd = ""
+            self.progress_var.set(0)
+            messagebox.showerror("AmpSys runner failed to start", f"{exc}\n\nLog: {self.runner_log_path}")
+            self.update_flow_statuses()
+            return
         self.update_flow_statuses()
         threading.Thread(target=self.consume_stdout, daemon=True).start()
         self.root.after(200, self.poll_process)
@@ -1428,6 +1464,14 @@ class AmpSysGUI:
             self.status_var.set(f"{phase} done")
         elif status == "error":
             self.status_var.set(event.get("message", "Error"))
+
+    def redraw_charts(self, _event=None) -> None:
+        if not hasattr(self, "conv_canvas") or not hasattr(self, "web_canvas"):
+            return
+        if self.telemetry_events:
+            self.draw_charts()
+        else:
+            self.draw_empty_charts()
 
     def draw_empty_charts(self) -> None:
         self.conv_canvas.delete("all")
