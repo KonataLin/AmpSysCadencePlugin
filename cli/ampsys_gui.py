@@ -155,6 +155,25 @@ def rel_or_abs(path: str) -> str:
     return str(Path(path).expanduser()) if path else ""
 
 
+def dialog_initial_dir(value: Any, fallback: Path) -> str:
+    text = str(value or "").strip()
+    candidates: List[Path] = []
+    if text and not (os.name != "nt" and is_windows_path(text)):
+        try:
+            path = Path(text).expanduser()
+            candidates.append(path if path.is_dir() else path.parent)
+        except Exception:
+            pass
+    candidates.append(fallback)
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            continue
+    return str(fallback)
+
+
 def split_csv(text: str) -> List[str]:
     return [x.strip() for x in text.replace(";", ",").split(",") if x.strip()]
 
@@ -488,7 +507,10 @@ class AmpSysGUI:
         logging.info("AmpSys GUI started. project=%s root=%s", self.project_path, ROOT)
 
     def setup_style(self) -> None:
-        self.root.tk.call("tk", "scaling", 1.12)
+        try:
+            self.root.tk.call("tk", "scaling", 1.12)
+        except Exception:
+            pass
         families = set(tkfont.families(self.root))
         default_family = tkfont.nametofont("TkDefaultFont").actual("family")
         self.ui_font_family = next((name for name in FONT_CANDIDATES if name in families), default_family)
@@ -684,10 +706,11 @@ class AmpSysGUI:
         ent.grid(row=1, column=0, padx=(0, 6 if browse else 0), sticky="ew")
         if browse:
             def choose() -> None:
+                initial = dialog_initial_dir(var.get(), ROOT)
                 if browse == "dir":
-                    val = filedialog.askdirectory(initialdir=str(Path(var.get() or ROOT).expanduser()))
+                    val = filedialog.askdirectory(initialdir=initial)
                 else:
-                    val = filedialog.askopenfilename(initialdir=str(Path(var.get() or ROOT).expanduser().parent))
+                    val = filedialog.askopenfilename(initialdir=initial)
                 if val:
                     var.set(val)
             ttk.Button(cell, text="...", command=choose, width=3).grid(row=1, column=1, sticky="e")
@@ -1195,10 +1218,26 @@ class AmpSysGUI:
 
     def open_workspace(self) -> None:
         self.project_path.parent.mkdir(parents=True, exist_ok=True)
-        if os.name == "nt":
-            os.startfile(str(self.project_path.parent))
-        else:
-            subprocess.Popen(["xdg-open", str(self.project_path.parent)])
+        path = str(self.project_path.parent)
+        try:
+            if os.name == "nt":
+                os.startfile(path)
+                return
+            candidates = []
+            if sys.platform == "darwin":
+                candidates.append(["open", path])
+            candidates.extend([
+                ["xdg-open", path],
+                ["gio", "open", path],
+            ])
+            for cmd in candidates:
+                if shutil.which(cmd[0]):
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+            raise FileNotFoundError("No desktop opener found (xdg-open/gio/open).")
+        except Exception as exc:
+            logging.exception("Could not open workspace: %s", path)
+            messagebox.showinfo("AmpSys", f"Workspace:\n{path}\n\nCould not open automatically:\n{exc}")
 
     def validate_before_run(self, cmd: str) -> bool:
         project = self.collect_project()
