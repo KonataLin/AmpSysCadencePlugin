@@ -1,0 +1,53 @@
+name: Bug report
+description: Report an AmpSys Cadence Plugin problem.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please include logs when possible so the issue can be reproduced.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem
+      description: What went wrong?
+      placeholder: GUI did not open, LUT cache stayed NO, optimization failed, writeback failed, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows x86_64
+        - Linux x86_64 / Virtuoso
+        - Windows build cache + Linux Virtuoso
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or release
+      placeholder: 5b661e6 or v0.1.0
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open schematic ...
+        2. Click AmpSys -> Extract Current Schematic...
+        3. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant log snippets. Remove private PDK paths if needed.
+      placeholder: |
+        ampsys_skill.log
+        ampsys_launch.log
+        ampsys_gui.log
+        ampsys_optimize.log
+      render: text

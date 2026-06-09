@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: GitHub Discussions / Questions
+    url: https://github.com/KonataLin/AmpSysCadencePlugin/issues
+    about: Use issues for questions, setup help, and compatibility reports.
+  - name: Sponsor
+    url: https://www.afdian.com/a/LocyDragon
+    about: Support AmpSys development.
