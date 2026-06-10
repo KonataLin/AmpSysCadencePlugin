@@ -242,9 +242,18 @@ METRIC_AXIS_DEFS = [
     ("power", "Power"),
     ("noise", "Noise"),
     ("area_um2", "Area"),
-    ("convergence", "Convergence"),
+    ("convergence", "Conv"),
 ]
 LOWER_BETTER_METRICS = {"power", "noise", "area_um2"}
+OBJECTIVE_WEIGHT_DEFS = [
+    ("fitness_a", "GBW", 0.70),
+    ("fitness_b", "Gain", 1.20),
+    ("fitness_c", "Power", 1.00),
+    ("fitness_d", "Noise", 0.25),
+    ("fitness_e", "CMRR", 0.40),
+    ("fitness_f", "PSRR", 0.20),
+    ("fitness_g", "Area", 0.28),
+]
 
 
 def point_metric_axes(points: List[Dict[str, Any]]) -> List[tuple]:
@@ -580,6 +589,7 @@ class AmpSysGUI:
         self.progress_var = tk.DoubleVar(root, 0.0)
         self.bulk_current_var = tk.StringVar(root, "")
         self.field_entries: Dict[str, ttk.Entry] = {}
+        self.weight_scale_vars: Dict[str, tk.DoubleVar] = {}
         self.settings_visible = tk.BooleanVar(root, False)
 
         self.setup_style()
@@ -873,6 +883,36 @@ class AmpSysGUI:
         cb = ttk.Checkbutton(parent, text=text, variable=var, style="Card.TCheckbutton")
         cb.grid(row=row, column=col, padx=12, pady=7, sticky="w")
         return cb
+
+    def objective_weight_control(self, parent: tk.Widget, key: str, label: str, default: float, row: int, col: int) -> None:
+        text_var = self.spec_vars.vars[key]
+        initial = max(0.0, min(3.0, safe_float(text_var.get(), default)))
+        scale_var = tk.DoubleVar(self.root, initial)
+        self.weight_scale_vars[key] = scale_var
+
+        cell = ttk.Frame(parent, style="StepBody.TFrame")
+        cell.grid(row=row, column=col, columnspan=2, padx=(6, 8), pady=7, sticky="ew")
+        cell.grid_columnconfigure(0, weight=1)
+        ttk.Label(cell, text=f"{label} weight", style="MutedCard.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 3))
+        ttk.Label(cell, text=f"default {default:.2f}", style="MutedCard.TLabel").grid(row=0, column=1, sticky="e", pady=(0, 3))
+
+        def set_from_scale(value: str) -> None:
+            text_var.set(f"{max(0.0, min(3.0, safe_float(value, default))):.2f}")
+
+        def set_from_entry(_event=None) -> str:
+            value = max(0.0, min(3.0, safe_float(text_var.get(), default)))
+            text_var.set(f"{value:.2f}")
+            scale_var.set(value)
+            self.save_project_silent()
+            return "break"
+
+        scale = ttk.Scale(cell, from_=0.0, to=3.0, variable=scale_var, command=set_from_scale)
+        scale.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        entry = ttk.Entry(cell, textvariable=text_var, width=7)
+        entry.grid(row=1, column=1, sticky="e")
+        entry.bind("<Return>", set_from_entry)
+        entry.bind("<FocusOut>", set_from_entry)
+        self.field_entries[f"specs.{key}"] = entry
 
     def tree_with_scrollbars(self, parent: tk.Widget, row: int, columnspan: int, columns: Iterable[str], height: int, selectmode: str = "browse") -> ttk.Treeview:
         box = ttk.Frame(parent, style="StepBody.TFrame")
@@ -1267,9 +1307,13 @@ class AmpSysGUI:
         self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
         self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
         self.field(self.settings_body, "Passive value aliases", self.settings_vars.vars["passive_value_aliases"], 3, 2, width=34, field_key="settings.passive_value_aliases")
-        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
+        ttk.Label(self.settings_body, text="Objective Weights", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
+        ttk.Label(self.settings_body, text="Balanced objective: larger weight means stronger preference for that metric.", style="MutedCard.TLabel").grid(row=4, column=2, columnspan=4, sticky="w", padx=6, pady=(14, 0))
+        for idx, (key, label, default) in enumerate(OBJECTIVE_WEIGHT_DEFS):
+            self.objective_weight_control(self.settings_body, key, label, default, 5 + idx // 3, (idx % 3) * 2)
+        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=8, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
         term_cols = ("name", "type", "model", "raw", "order", "dgbs")
-        self.term_tree = self.tree_with_scrollbars(self.settings_body, 5, 6, term_cols, height=5)
+        self.term_tree = self.tree_with_scrollbars(self.settings_body, 9, 6, term_cols, height=5)
         for col, text, width in [
             ("name", "Name", 100),
             ("type", "Type", 76),
@@ -2065,7 +2109,7 @@ class AmpSysGUI:
         canvas.delete("all")
         w = max(10, canvas.winfo_width())
         h = max(10, canvas.winfo_height())
-        pad = 52
+        pad = 28
         axes = point_metric_axes(points)
         canvas.create_rectangle(0, 0, w, h, fill=CHART_BG, outline="")
         if not points:
@@ -2073,46 +2117,88 @@ class AmpSysGUI:
                 return
             canvas.create_text(pad, pad, anchor="nw", fill=MUTED, text="Waiting for population points...")
             return
-        xs = [pad + i * (w - 2 * pad) / max(1, len(axes) - 1) for i in range(len(axes))]
-        for x, (_key, label) in zip(xs, axes):
-            canvas.create_line(x, pad, x, h - pad, fill=LINE)
-            canvas.create_text(x, h - pad + 18, text=label, fill=MUTED, font=self.font_small)
         mins: Dict[str, float] = {}
         maxs: Dict[str, float] = {}
         for key, _ in axes:
-            vals = [safe_float(p.get(key), 0.0) for p in points]
+            vals = [safe_float(p.get(key), 0.0) for p in points if key in p or key == "convergence"] or [0.0]
             mins[key], maxs[key] = min(vals), max(vals)
             if math.isclose(mins[key], maxs[key]):
                 mins[key] -= 1.0
                 maxs[key] += 1.0
+
+        cx = w / 2
+        cy = h / 2 + 10
+        radius = max(34.0, min((w - 140) / 2, (h - 92) / 2))
+        label_radius = radius + 18
+        angles = [(-math.pi / 2) + (2 * math.pi * i / max(1, len(axes))) for i in range(len(axes))]
+
+        def clamp(value: float) -> float:
+            return max(0.0, min(1.0, value))
+
+        def metric_norm(point: Dict[str, Any], key: str) -> float:
+            span = maxs[key] - mins[key]
+            if math.isclose(span, 0.0):
+                norm = 0.5
+            else:
+                norm = (safe_float(point.get(key), 0.0) - mins[key]) / span
+            if key in LOWER_BETTER_METRICS:
+                norm = 1.0 - norm
+            return clamp(norm)
+
+        def xy(norm: float, angle: float) -> tuple:
+            r = radius * clamp(norm)
+            return cx + math.cos(angle) * r, cy + math.sin(angle) * r
+
+        for ring in range(1, 6):
+            rr = radius * ring / 5
+            coords: List[float] = []
+            for angle in angles:
+                coords.extend([cx + math.cos(angle) * rr, cy + math.sin(angle) * rr])
+            if len(coords) >= 6:
+                canvas.create_line(*(coords + coords[:2]), fill=LINE, width=1)
+        for angle, (_key, label) in zip(angles, axes):
+            sx, sy = xy(1.0, angle)
+            canvas.create_line(cx, cy, sx, sy, fill=LINE)
+            lx = cx + math.cos(angle) * label_radius
+            ly = cy + math.sin(angle) * label_radius
+            if lx < cx - 8:
+                anchor = "e"
+            elif lx > cx + 8:
+                anchor = "w"
+            elif ly < cy:
+                anchor = "s"
+            else:
+                anchor = "n"
+            canvas.create_text(lx, ly, text=label, fill=MUTED, font=self.font_small, anchor=anchor)
+
         sorted_points = sorted(points, key=lambda p: safe_float(p.get("convergence"), 0.0))
-        sample = sorted_points[-80:]
+        if len(sorted_points) > 80:
+            sample = [sorted_points[int(i * (len(sorted_points) - 1) / 79)] for i in range(80)]
+        else:
+            sample = sorted_points
         for p in sample:
             convergence = safe_float(p.get("convergence"), 0.0)
             conv_norm = (convergence - mins["convergence"]) / (maxs["convergence"] - mins["convergence"])
             color = self.mix_color("#c7d2fe", ACCENT_2, conv_norm)
             coords = []
-            for x, (key, _label) in zip(xs, axes):
-                val = safe_float(p.get(key), 0.0)
-                if key in LOWER_BETTER_METRICS:
-                    norm = 1.0 - (val - mins[key]) / (maxs[key] - mins[key])
-                else:
-                    norm = (val - mins[key]) / (maxs[key] - mins[key])
-                y = h - pad - norm * (h - 2 * pad)
+            for angle, (key, _label) in zip(angles, axes):
+                x, y = xy(metric_norm(p, key), angle)
                 coords.extend([x, y])
-            if len(coords) >= 4:
-                canvas.create_line(*coords, fill=color, width=1)
+            if len(coords) >= 6:
+                canvas.create_line(*(coords + coords[:2]), fill=color, width=1)
+                for x, y in zip(coords[0::2], coords[1::2]):
+                    canvas.create_oval(x - 1.4, y - 1.4, x + 1.4, y + 1.4, fill=color, outline="")
         best = sorted_points[-1]
         best_coords = []
-        for x, (key, _label) in zip(xs, axes):
-            val = safe_float(best.get(key), 0.0)
-            norm = (val - mins[key]) / (maxs[key] - mins[key])
-            if key in LOWER_BETTER_METRICS:
-                norm = 1.0 - norm
-            y = h - pad - norm * (h - 2 * pad)
+        for angle, (key, _label) in zip(angles, axes):
+            x, y = xy(metric_norm(best, key), angle)
             best_coords.extend([x, y])
-        canvas.create_line(*best_coords, fill=ACCENT_2, width=3)
-        canvas.create_text(pad, 18, anchor="nw", fill=INK, text=f"{len(points)} individuals, bright line = current best", font=self.font_bold)
+        if len(best_coords) >= 6:
+            canvas.create_line(*(best_coords + best_coords[:2]), fill=ACCENT_2, width=3)
+            for x, y in zip(best_coords[0::2], best_coords[1::2]):
+                canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=ACCENT_2, outline="")
+        canvas.create_text(pad, 18, anchor="nw", fill=INK, text=f"Population radar: {len(points)} individuals", font=self.font_bold)
+        canvas.create_text(w - pad, 18, anchor="ne", fill=MUTED, text="bright = current best", font=self.font_small)
 
     def draw_result_metric_summary(self, canvas: tk.Canvas, w: int, h: int, pad: int) -> bool:
         metrics = self.result_data.get("metrics", {}) if isinstance(self.result_data, dict) else {}
@@ -2135,17 +2221,41 @@ class AmpSysGUI:
             values.append(("Noise", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("noise"), 0.0) / 1e-6)), f"{safe_float(metrics.get('noise'), 0.0):.2g}"))
         if safe_float(metrics.get("area_um2"), 0.0) > 0:
             values.append(("Area", 1.0 - min(1.0, max(0.0, safe_float(metrics.get("area_um2"), 0.0) / 1000.0)), f"{safe_float(metrics.get('area_um2'), 0.0):.1f} um2"))
-        values.append(("Convergence", safe_float(self.result_data.get("convergence"), 1.0), "complete"))
-        xs = [pad + i * (w - 2 * pad) / max(1, len(values) - 1) for i in range(len(values))]
+        values.append(("Conv", safe_float(self.result_data.get("convergence"), 1.0), "complete"))
+        cx = w / 2
+        cy = h / 2 + 10
+        radius = max(34.0, min((w - 140) / 2, (h - 92) / 2))
+        label_radius = radius + 18
+        angles = [(-math.pi / 2) + (2 * math.pi * i / max(1, len(values))) for i in range(len(values))]
+        for ring in range(1, 6):
+            rr = radius * ring / 5
+            ring_coords: List[float] = []
+            for angle in angles:
+                ring_coords.extend([cx + math.cos(angle) * rr, cy + math.sin(angle) * rr])
+            if len(ring_coords) >= 6:
+                canvas.create_line(*(ring_coords + ring_coords[:2]), fill=LINE, width=1)
         coords: List[float] = []
-        for x, (label, norm, text) in zip(xs, values):
-            canvas.create_line(x, pad, x, h - pad, fill=LINE)
-            canvas.create_text(x, h - pad + 18, text=label, fill=MUTED, font=self.font_small)
-            canvas.create_text(x, h - pad + 36, text=text, fill=MUTED, font=self.font_small)
-            y = h - pad - norm * (h - 2 * pad)
+        for angle, (label, norm, _text) in zip(angles, values):
+            norm = max(0.0, min(1.0, norm))
+            x = cx + math.cos(angle) * radius * norm
+            y = cy + math.sin(angle) * radius * norm
             coords.extend([x, y])
-        if len(coords) >= 4:
-            canvas.create_line(*coords, fill=ACCENT_2, width=3)
+            sx = cx + math.cos(angle) * radius
+            sy = cy + math.sin(angle) * radius
+            canvas.create_line(cx, cy, sx, sy, fill=LINE)
+            lx = cx + math.cos(angle) * label_radius
+            ly = cy + math.sin(angle) * label_radius
+            if lx < cx - 8:
+                anchor = "e"
+            elif lx > cx + 8:
+                anchor = "w"
+            elif ly < cy:
+                anchor = "s"
+            else:
+                anchor = "n"
+            canvas.create_text(lx, ly, text=label, fill=MUTED, font=self.font_small, anchor=anchor)
+        if len(coords) >= 6:
+            canvas.create_line(*(coords + coords[:2]), fill=ACCENT_2, width=3)
             for x, y in zip(coords[0::2], coords[1::2]):
                 canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill=ACCENT_2, outline="")
         canvas.create_text(pad, 18, anchor="nw", fill=INK, text="Final result metrics", font=self.font_bold)

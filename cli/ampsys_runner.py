@@ -857,7 +857,7 @@ def metrics_from_individual(ind) -> Dict[str, Any]:
     return out
 
 
-def build_generation_event(gen: int, optimizer: Any) -> Dict[str, Any]:
+def build_generation_event(gen: int, optimizer: Any, best_convergence: Optional[float] = None) -> Dict[str, Any]:
     population = list(getattr(optimizer, "population", []) or [])
     population.sort(key=individual_fitness, reverse=True)
     fitness_values = [individual_fitness(ind) for ind in population]
@@ -876,18 +876,13 @@ def build_generation_event(gen: int, optimizer: Any) -> Dict[str, Any]:
     best = metrics_from_individual(best_ind) if best_ind is not None else (points[0] if points else {})
     max_generations = int(getattr(getattr(optimizer, "config", None), "max_generations", 0) or getattr(optimizer, "max_generations", 0) or 0)
     generation = int(gen) + 1
-    best["convergence"] = generation / max(1, max_generations)
+    if best_convergence is not None:
+        best["convergence"] = max(0.0, min(1.0, float(best_convergence)))
+    elif points:
+        best["convergence"] = max(float(point.get("convergence") or 0.0) for point in points)
+    else:
+        best["convergence"] = 0.0
     stats = {}
-    generation_stats = getattr(optimizer, "generation_stats", None)
-    if generation_stats:
-        try:
-            stats = {
-                str(key): value
-                for key, value in dict(generation_stats[-1]).items()
-                if "fitness" not in str(key).lower()
-            }
-        except Exception:
-            stats = {}
     return {
         "phase": "optimize",
         "status": "generation",
@@ -917,10 +912,37 @@ def install_optimizer_telemetry(telemetry: Path) -> None:
 
     def optimize_with_telemetry(self, initial_population=None, callback=None):
         telemetry_path = getattr(GeneticOptimizer, "_ampsys_telemetry_path", telemetry)
+        public_state = {
+            "baseline_best": None,
+            "best_seen": None,
+            "scale": 1e-9,
+            "public": 0.0,
+        }
+
+        def public_convergence(optimizer: Any) -> float:
+            population = list(getattr(optimizer, "population", []) or [])
+            fitness_values = [individual_fitness(ind) for ind in population]
+            best_ind = getattr(optimizer, "best_individual", None)
+            if best_ind is not None:
+                fitness_values.append(individual_fitness(best_ind))
+            if not fitness_values:
+                return float(public_state["public"])
+            current_best = max(fitness_values)
+            if public_state["baseline_best"] is None:
+                public_state["baseline_best"] = current_best
+                public_state["best_seen"] = current_best
+            public_state["best_seen"] = max(float(public_state["best_seen"]), current_best)
+            spread = max(fitness_values) - min(fitness_values)
+            local_scale = max(abs(spread), abs(current_best) * 0.05, 1e-9)
+            public_state["scale"] = max(float(public_state["scale"]), local_scale)
+            improvement = max(0.0, float(public_state["best_seen"]) - float(public_state["baseline_best"]))
+            visible = 1.0 - math.exp(-improvement / max(float(public_state["scale"]), 1e-9))
+            public_state["public"] = max(float(public_state["public"]), visible)
+            return float(public_state["public"])
 
         def telemetry_callback(gen, optimizer):
             try:
-                append_event(Path(telemetry_path), build_generation_event(gen, optimizer))
+                append_event(Path(telemetry_path), build_generation_event(gen, optimizer, public_convergence(optimizer)))
             except Exception as exc:
                 print(f"[AmpSys] WARNING: live telemetry event failed: {exc}", file=sys.stderr)
             if callback:

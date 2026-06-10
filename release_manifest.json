@@ -1,6 +1,6 @@
 {
   "name": "AmpSysCadencePlugin",
-  "built_at": "2026-06-10 00:20:00",
+  "built_at": "2026-06-10 08:45:00",
   "method": "protected-core-binaries + standalone-gui",
   "platform": "windows_amd64 + linux_x86_64",
   "builder_python": "windows_amd64_py312 core; linux_x86_64_py310 core",
@@ -27,6 +27,9 @@
     "The public runner selects the core binary by OS/CPU, not by the user's Python minor version.",
     "Optimization progress and metric plots come from telemetry, so verbose output can stay off.",
     "Public GUI/log/result telemetry shows convergence instead of raw fitness values.",
+    "The convergence trace now uses public best-score improvement, not generation count.",
+    "Population metrics are shown as a radar/spider scatter chart.",
+    "Balanced objective weights are adjustable in GUI Settings: GBW, Gain, Power, Noise, CMRR, PSRR, Area.",
     "Differential-only metrics such as CMRR/PSRR are shown only when the engine reports them; area is reported when sizing data exists.",
     "Windows core is an onedir executable at core/windows_amd64/ampsys_core/ampsys_core.exe.",
     "Linux core is distributed as core/linux_x86_64.tar.gz and extracted by install_linux.sh.",
