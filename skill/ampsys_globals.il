@@ -15,11 +15,6 @@ unless(ampsys_root
 defvar(ampsys_work strcat(ampsys_root "/workspace"))
 defvar(ampsys_cli  strcat(ampsys_root "/cli"))
 
-defvar(ampsys_gui_exe getShellEnvVar("AMPSYS_GUI_EXE"))
-unless(ampsys_gui_exe
-  ampsys_gui_exe = ""
-)
-
 defvar(ampsys_pycmd getShellEnvVar("AMPSYS_PYCMD"))
 unless(ampsys_pycmd
   ; User requested py -3.  On Linux, install_linux.sh can create a py shim.
@@ -28,24 +23,6 @@ unless(ampsys_pycmd
 
 procedure(ampsysOnWindows()
   or(getShellEnvVar("ComSpec") getShellEnvVar("COMSPEC") equal(getShellEnvVar("OS") "Windows_NT"))
-)
-
-procedure(ampsysGuiExecutable()
-  let((candidate)
-    candidate = ampsys_gui_exe
-    if(and(candidate nequal(candidate "") isFile(candidate))
-    then
-      candidate
-    else
-      if(ampsysOnWindows()
-      then
-        candidate = strcat(ampsys_root "/gui/windows_amd64/ampsys_gui/ampsys_gui.exe")
-      else
-        candidate = strcat(ampsys_root "/gui/linux_x86_64/ampsys_gui/ampsys_gui")
-      )
-      if(isFile(candidate) then candidate else nil)
-    )
-  )
 )
 
 defvar(ampsys_launch_prefix getShellEnvVar("AMPSYS_LAUNCH_PREFIX"))

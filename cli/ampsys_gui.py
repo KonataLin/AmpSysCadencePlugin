@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """AmpSys Cadence GUI.
 
 This file is intentionally open and readable.  The private AmpSys engine is
@@ -79,7 +79,13 @@ FONT_CANDIDATES = (
 )
 
 
+
 def detect_default_engine_root() -> Path:
+    configured = os.environ.get("AMPSYS_ENGINE_ROOT", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.exists():
+            return candidate.resolve()
     if find_core_executable(ROOT):
         return ROOT
     try:
@@ -93,8 +99,38 @@ def detect_default_engine_root() -> Path:
     except Exception:
         return ROOT
 
-
 DEFAULT_ENGINE_ROOT = detect_default_engine_root()
+
+
+def env_path(name: str) -> Optional[Path]:
+    text = os.environ.get(name, "").strip()
+    return Path(text).expanduser() if text else None
+
+
+def preferred_windows_temp_root() -> Optional[Path]:
+    if os.name != "nt":
+        return None
+    env = env_path("AMPSYS_TEMP_DIR")
+    if env:
+        return env
+    h_root = Path(r"H:\AmpSysTemp")
+    if h_root.drive and Path(h_root.drive + "\\").exists():
+        return h_root
+    return None
+
+
+def default_runtime_temp_dir(project_dir: Path) -> Path:
+    return preferred_windows_temp_root() or (project_dir / "tmp")
+
+
+def default_lut_cache_dir(project_dir: Path) -> Path:
+    env = env_path("AMPSYS_CACHE_DIR")
+    if env:
+        return env
+    win_temp = preferred_windows_temp_root()
+    if win_temp:
+        return win_temp / "autoflow_cache"
+    return ROOT / "libraries"
 
 
 def command_available(cmd: List[str]) -> bool:
@@ -246,14 +282,15 @@ METRIC_AXIS_DEFS = [
 ]
 LOWER_BETTER_METRICS = {"power", "noise", "area_um2"}
 OBJECTIVE_WEIGHT_DEFS = [
-    ("fitness_a", "GBW", 0.70),
-    ("fitness_b", "Gain", 1.20),
-    ("fitness_c", "Power", 1.00),
-    ("fitness_d", "Noise", 0.25),
-    ("fitness_e", "CMRR", 0.40),
-    ("fitness_f", "PSRR", 0.20),
-    ("fitness_g", "Area", 0.28),
+    ("fitness_b", "Gain priority", 1.20, "main", "validated"),
+    ("fitness_a", "Bandwidth priority", 0.70, "main", "validated"),
+    ("fitness_d", "Noise priority", 0.25, "main", "validated"),
+    ("fitness_g", "Area pressure", 0.10, "main", "effective; conservative default"),
+    ("fitness_e", "CMRR priority", 0.20, "advanced", "differential/eligible topologies"),
+    ("fitness_f", "PSRR priority", 0.10, "advanced", "topology dependent"),
+    ("fitness_c", "Power priority", 0.00, "advanced", "fixed-current flow"),
 ]
+OBJECTIVE_WEIGHT_DEFAULTS = {key: default for key, _label, default, _group, _note in OBJECTIVE_WEIGHT_DEFS}
 
 
 def point_metric_axes(points: List[Dict[str, Any]]) -> List[tuple]:
@@ -301,8 +338,8 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "process_vdd": 1.8,
             "hspice_dir": "",
             "hspice_cmd": "hspice -mt 2",
-            "cache_dir": str(ROOT / "libraries"),
-            "temp_dir": str(ROOT / "workspace" / "tmp"),
+            "cache_dir": str(default_lut_cache_dir(project_dir)),
+            "temp_dir": str(default_runtime_temp_dir(project_dir)),
             "force_rescan": False,
             "L_min": 0.18e-6,
             "L_list": "",
@@ -337,13 +374,13 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "kcl_safe_tol": 0.05,
             "kcl_dead_tol": 0.15,
             "current_mismatch_tol": 0.05,
-            "fitness_a": 0.7,
-            "fitness_b": 1.2,
-            "fitness_c": 1.0,
-            "fitness_d": 0.25,
-            "fitness_e": 0.4,
-            "fitness_f": 0.2,
-            "fitness_g": 0.28,
+            "fitness_a": OBJECTIVE_WEIGHT_DEFAULTS["fitness_a"],
+            "fitness_b": OBJECTIVE_WEIGHT_DEFAULTS["fitness_b"],
+            "fitness_c": OBJECTIVE_WEIGHT_DEFAULTS["fitness_c"],
+            "fitness_d": OBJECTIVE_WEIGHT_DEFAULTS["fitness_d"],
+            "fitness_e": OBJECTIVE_WEIGHT_DEFAULTS["fitness_e"],
+            "fitness_f": OBJECTIVE_WEIGHT_DEFAULTS["fitness_f"],
+            "fitness_g": OBJECTIVE_WEIGHT_DEFAULTS["fitness_g"],
         },
             "config": {
             "population_size": 40,
@@ -401,11 +438,18 @@ def cache_pair_in_dir(cache_dir: Path) -> Optional[Path]:
 
 
 def infer_cache_dir() -> Optional[Path]:
-    candidates = [
+    candidates = []
+    env_cache = env_path("AMPSYS_CACHE_DIR")
+    if env_cache:
+        candidates.append(env_cache)
+    win_temp = preferred_windows_temp_root()
+    if win_temp:
+        candidates.extend([win_temp / "autoflow_cache", win_temp])
+    candidates.extend([
         Path.home() / "Desktop" / "autoflow_cache",
         Path.home() / "ampsys_lut" / "autoflow_cache",
         Path.home() / "ampsys_lut",
-    ]
+    ])
     for candidate in candidates:
         if cache_pair_in_dir(candidate):
             return candidate
@@ -453,23 +497,24 @@ def sanitize_loaded_project(project: Dict[str, Any], project_path: Path) -> bool
             settings[key] = value
             changed = True
 
-    temp_dir = str(project_dir / "tmp")
+    temp_dir = str(default_runtime_temp_dir(project_dir))
     if lib.get("temp_dir") != temp_dir:
         lib["temp_dir"] = temp_dir
         changed = True
+
+    cache_text = str(lib.get("cache_dir") or "")
+    cache_path = Path(cache_text).expanduser() if cache_text else Path()
+    if not cache_text or is_windows_path(cache_text) != (os.name == "nt") or not cache_pair_in_dir(cache_path):
+        inferred = infer_cache_dir()
+        if inferred:
+            lib["cache_dir"] = str(inferred)
+            cache_path = inferred
+            changed = True
 
     if os.name != "nt":
         for key in ("model_path", "hspice_dir", "hspice_cmd"):
             if is_windows_path(lib.get(key)):
                 lib[key] = "" if key != "hspice_cmd" else "hspice -mt 2"
-                changed = True
-        cache_text = str(lib.get("cache_dir") or "")
-        cache_path = Path(cache_text).expanduser() if cache_text else Path()
-        if is_windows_path(cache_text) or not cache_pair_in_dir(cache_path):
-            inferred = infer_cache_dir()
-            if inferred:
-                lib["cache_dir"] = str(inferred)
-                cache_path = inferred
                 changed = True
         triplet = infer_cache_triplet(cache_path)
         if triplet:
@@ -884,7 +929,7 @@ class AmpSysGUI:
         cb.grid(row=row, column=col, padx=12, pady=7, sticky="w")
         return cb
 
-    def objective_weight_control(self, parent: tk.Widget, key: str, label: str, default: float, row: int, col: int) -> None:
+    def objective_weight_control(self, parent: tk.Widget, key: str, label: str, default: float, row: int, col: int, note: str = "") -> None:
         text_var = self.spec_vars.vars[key]
         initial = max(0.0, min(3.0, safe_float(text_var.get(), default)))
         scale_var = tk.DoubleVar(self.root, initial)
@@ -893,8 +938,9 @@ class AmpSysGUI:
         cell = ttk.Frame(parent, style="StepBody.TFrame")
         cell.grid(row=row, column=col, columnspan=2, padx=(6, 8), pady=7, sticky="ew")
         cell.grid_columnconfigure(0, weight=1)
-        ttk.Label(cell, text=f"{label} weight", style="MutedCard.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 3))
-        ttk.Label(cell, text=f"default {default:.2f}", style="MutedCard.TLabel").grid(row=0, column=1, sticky="e", pady=(0, 3))
+        ttk.Label(cell, text=label, style="MutedCard.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 3))
+        hint = f"V2 default {default:.2f}" + (f" · {note}" if note else "")
+        ttk.Label(cell, text=hint, style="MutedCard.TLabel").grid(row=0, column=1, sticky="e", pady=(0, 3))
 
         def set_from_scale(value: str) -> None:
             text_var.set(f"{max(0.0, min(3.0, safe_float(value, default))):.2f}")
@@ -1122,6 +1168,10 @@ class AmpSysGUI:
             text = str(self.spec_vars.get(key, "")).strip()
             if text and safe_float(text, -1.0) < 0:
                 issues.append(f"{label} must be non-negative when set.")
+        for key, label, _default, _group, _note in OBJECTIVE_WEIGHT_DEFS:
+            text = str(self.spec_vars.get(key, "")).strip()
+            if text and safe_float(text, -1.0) < 0:
+                issues.append(f"{label} must be non-negative.")
         if safe_int(self.cfg_vars.get("population_size"), 0) <= 0:
             issues.append("Population must be a positive integer.")
         if safe_int(self.cfg_vars.get("max_generations"), 0) <= 0:
@@ -1279,11 +1329,16 @@ class AmpSysGUI:
         self.display_field(specs, "Sat margin opt", "saturation_margin", 3, 0)
         self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2, field_key="config.population_size")
         self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0, field_key="config.max_generations")
-        ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=4, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=5, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=5, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=6, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
-        ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=7, column=0, columnspan=4, padx=12, sticky="w")
+        ttk.Label(specs, text="V2 Objective Priorities", style="Card.TLabel", font=self.font_bold).grid(row=5, column=0, columnspan=4, sticky="w", padx=12, pady=(12, 0))
+        ttk.Label(specs, text="Unit-normalized priorities. Gain/GBW/Noise/Area are the validated primary controls.", style="MutedCard.TLabel").grid(row=5, column=2, columnspan=2, sticky="e", padx=12, pady=(12, 0))
+        main_weights = [item for item in OBJECTIVE_WEIGHT_DEFS if item[3] == "main"]
+        for idx, (key, label, default, _group, note) in enumerate(main_weights):
+            self.objective_weight_control(specs, key, label, default, 6 + idx // 2, (idx % 2) * 2, note)
+        ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=8, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=9, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=9, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=10, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
+        ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=11, column=0, columnspan=4, padx=12, sticky="w")
 
         row += 1
         settings = ttk.Frame(page, style="Shell.TFrame", padding=(18, 14, 18, 14))
@@ -1307,13 +1362,14 @@ class AmpSysGUI:
         self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
         self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
         self.field(self.settings_body, "Passive value aliases", self.settings_vars.vars["passive_value_aliases"], 3, 2, width=34, field_key="settings.passive_value_aliases")
-        ttk.Label(self.settings_body, text="Objective Weights", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
-        ttk.Label(self.settings_body, text="Balanced objective: larger weight means stronger preference for that metric.", style="MutedCard.TLabel").grid(row=4, column=2, columnspan=4, sticky="w", padx=6, pady=(14, 0))
-        for idx, (key, label, default) in enumerate(OBJECTIVE_WEIGHT_DEFS):
-            self.objective_weight_control(self.settings_body, key, label, default, 5 + idx // 3, (idx % 3) * 2)
-        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=8, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
+        ttk.Label(self.settings_body, text="Advanced V2 Priorities", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
+        ttk.Label(self.settings_body, text="CMRR/PSRR are topology dependent; power is mostly fixed by user currents.", style="MutedCard.TLabel").grid(row=4, column=2, columnspan=4, sticky="w", padx=6, pady=(14, 0))
+        advanced_weights = [item for item in OBJECTIVE_WEIGHT_DEFS if item[3] == "advanced"]
+        for idx, (key, label, default, _group, note) in enumerate(advanced_weights):
+            self.objective_weight_control(self.settings_body, key, label, default, 5 + idx // 3, (idx % 3) * 2, note)
+        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=7, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
         term_cols = ("name", "type", "model", "raw", "order", "dgbs")
-        self.term_tree = self.tree_with_scrollbars(self.settings_body, 9, 6, term_cols, height=5)
+        self.term_tree = self.tree_with_scrollbars(self.settings_body, 8, 6, term_cols, height=5)
         for col, text, width in [
             ("name", "Name", 100),
             ("type", "Type", 76),
@@ -1623,7 +1679,7 @@ class AmpSysGUI:
         }
         project["library"] = self.coerce_library()
         project["library"]["force_rescan"] = False
-        project["library"]["temp_dir"] = str(self.project_path.parent / "tmp")
+        project["library"]["temp_dir"] = str(default_runtime_temp_dir(self.project_path.parent))
         project["specs"] = self.coerce_specs()
         project["specs"]["enable_vds_iteration"] = True
         project["config"] = self.coerce_config()
@@ -1667,6 +1723,8 @@ class AmpSysGUI:
             else:
                 scale = getattr(var, "_ampsys_scale", 1.0)
                 out[key] = safe_float(val) * scale
+        for key, default in OBJECTIVE_WEIGHT_DEFAULTS.items():
+            out[key] = max(0.0, safe_float(out.get(key), default))
         return out
 
     def coerce_config(self) -> Dict[str, Any]:
@@ -1901,10 +1959,10 @@ class AmpSysGUI:
         telemetry = Path(self.collect_project()["telemetry_path"])
         if telemetry.exists():
             telemetry.write_text("", encoding="utf-8")
-        command = runner_command(cmd, self.project_path)
         env = os.environ.copy()
         env["AMPSYS_ENGINE_ROOT"] = self.top_vars.get("engine_root")
         env["AMPSYS_PLUGIN_ROOT"] = str(ROOT)
+        command = runner_command(cmd, self.project_path)
         logging.info("Starting runner: %s", command)
         logging.info("Runner project snapshot:\n%s", json.dumps(self.collect_project(), indent=2, ensure_ascii=False, default=str))
         logging.info("Runner log path: %s", self.runner_log_path)
@@ -2371,3 +2429,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

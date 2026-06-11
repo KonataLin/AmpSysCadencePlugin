@@ -435,3 +435,30 @@ Run Optimization 可点击
 - GUI 和日志中不显示原始 fitness 数值，对外统一显示为 Convergence/收敛度；`telemetry.jsonl` 和 `result.json` 也不会写出 raw fitness。
 - 动态 metric 图按实际结果显示指标：单端电路没有 CMRR/PSRR 时不会硬显示；差分电路若引擎返回 CMRR、PSRR、Area，则会自动加入动态指标图和结果摘要。
 - W/L 写回默认保留小数点后 2 位，例如 `1.93u`；需要修改时展开 GUI 底部 `Settings`，改 `Geometry decimals`，合法范围是 0 到 9。
+
+## 15. Run 前快速诊断
+
+如果已经从 Cadence 导出了 schematic，但不确定 cache、器件电流、V2 engine 或写回路径是否正确，先运行：
+
+```bash
+py -3 <plugin-root>/cli/ampsys_runner.py diagnose --project <workspace>/<lib_cell>/project.json
+```
+
+在 Linux/Virtuoso 环境中也可以使用安装脚本创建的绝对 Python shim：
+
+```bash
+/home/<user>/bin/py -3 /opt/AmpSysCadencePlugin/cli/ampsys_runner.py diagnose --project /opt/AmpSysCadencePlugin/workspace/<lib_cell>/project.json
+```
+
+看到下面这些字段即可继续点 `Run Optimization`：
+
+```text
+"status": "ok"
+"issues": []
+"v2_source_engine": true
+"runner_would_delegate_optimize": false
+"library": { "ready": true, ... }
+"devices": { "missing_current": [] }
+```
+
+`diagnose` 不会跑优化、不建 LUT、不调用 HSPICE，只做 project/cache/engine/writeback 路径检查。若 `issues` 非空，先按提示修复后再运行优化。

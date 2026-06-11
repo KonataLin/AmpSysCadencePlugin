@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Headless AmpSys runner used by the GUI and Cadence SKILL plugin."""
 
 from __future__ import annotations
@@ -92,10 +92,9 @@ def should_delegate_to_core(cmd: str = "", argv: Optional[List[str]] = None) -> 
         return False
     if os.environ.get(DISABLE_CORE_ENV) == "1":
         return False
-    if cmd == "writeback":
+    if cmd in {"writeback", "diagnose"}:
         return False
     return find_core_executable() is not None
-
 
 def project_arg_path(argv: List[str]) -> Optional[Path]:
     try:
@@ -164,6 +163,7 @@ def has_compiled_engine(root: Path) -> bool:
 
 def has_source_engine(root: Path) -> bool:
     return all((root / pkg).exists() for pkg in ENGINE_PACKAGES)
+
 
 
 def available_engine_dirs(base: Path) -> List[str]:
@@ -729,7 +729,7 @@ def create_flow(project: Dict[str, Any]):
     }
     supported = set(inspect.signature(AmpFlow.from_pdk).parameters)
     flow = AmpFlow.from_pdk(**{k: v for k, v in from_pdk_kwargs.items() if k in supported})
-    flow.config = AmpFlowConfig(
+    flow_config_kwargs = dict(
         population_size=get_int(run_cfg, "population_size", 50),
         max_generations=get_int(run_cfg, "max_generations", 20),
         verbose=bool(run_cfg.get("verbose", False)),
@@ -738,9 +738,12 @@ def create_flow(project: Dict[str, Any]):
         enable_kvl_check=bool(run_cfg.get("enable_kvl_check", True)),
         fast_mode=bool(run_cfg.get("fast_mode", True)),
         debug_log=bool(run_cfg.get("debug_log", False)),
+        random_seed=get_int(run_cfg, "random_seed", 42),
         monitor=bool(run_cfg.get("monitor", False)),
         monitor_interval=get_float(run_cfg, "monitor_interval", 5.0),
     )
+    config_supported = set(inspect.signature(AmpFlowConfig).parameters)
+    flow.config = AmpFlowConfig(**{k: v for k, v in flow_config_kwargs.items() if k in config_supported})
     return flow, engine_root
 
 
@@ -1222,6 +1225,121 @@ def run_writeback(project_path: Path) -> None:
     print(skill_path)
 
 
+def diagnose_project(project_path: Path) -> None:
+    project = json.loads(project_path.read_text(encoding="utf-8-sig"))
+    project["project_dir"] = project.get("project_dir") or str(project_path.parent)
+    lib = project.get("library", {})
+    specs = project.get("specs", {})
+    devices = project.get("devices", []) or []
+    netlist_text = str(project.get("netlist_path") or "").strip()
+    netlist_path = Path(netlist_text).expanduser() if netlist_text else None
+    engine_text = str(project.get("engine_root") or os.environ.get("AMPSYS_ENGINE_ROOT", "") or "")
+    try:
+        engine_root = resolve_engine_root(Path(engine_text).expanduser()) if engine_text else resolve_engine_root(Path(__file__).resolve().parents[1])
+        engine_error = ""
+    except Exception as exc:
+        engine_root = Path(engine_text or "")
+        engine_error = str(exc)
+
+    cache_dir = library_cache_dir(lib, project_path)
+    marker = library_ready_marker(lib, project_path)
+    direct_pair = find_ampflow_cache_pair(lib, cache_dir)
+    child_dir = cache_dir / "autoflow_cache"
+    child_pair = find_ampflow_cache_pair(lib, child_dir) if child_dir.is_dir() else None
+    best_pair = direct_pair or child_pair
+    inferred_model_path = ""
+    if best_pair:
+        key = best_pair[0].name[len("nmos_"):-len(".pkl")]
+        stem = infer_model_stem_from_cache_key(key, lib)
+        if stem:
+            inferred_model_path = str(best_pair[0].parent / f"{stem}.lib")
+
+    mos_devices = [d for d in devices if (d.get("type") or d.get("kind")) in ("nmos", "pmos")]
+    passive_devices = [d for d in devices if (d.get("type") or d.get("kind")) in ("res", "cap")]
+    missing_current = []
+    for d in mos_devices:
+        current = get_float(d, "current", 0.0)
+        if current <= 0:
+            current = get_float(d, "Id", 0.0)
+        if current <= 0:
+            missing_current.append(str(d.get("name") or "<unnamed>"))
+
+    weight_keys = ("fitness_a", "fitness_b", "fitness_c", "fitness_d", "fitness_e", "fitness_f", "fitness_g")
+    weights = {key: specs.get(key, None) for key in weight_keys}
+    missing_weights = [key for key, value in weights.items() if value in (None, "")]
+    engine_source = has_source_engine(engine_root)
+    engine_compiled = has_compiled_engine(engine_root)
+    core_exe = find_core_executable()
+    would_delegate = should_delegate_to_core("optimize", ["optimize", "--project", str(project_path)])
+
+    issues: List[str] = []
+    if engine_error:
+        issues.append(f"Engine root error: {engine_error}")
+    if not engine_compiled and not core_exe and not engine_source:
+        issues.append("No AmpSys engine or protected core was detected.")
+    if marker is None:
+        issues.append("LUT cache is not ready.")
+    if missing_current:
+        issues.append("MOS current is missing for: " + ", ".join(missing_current))
+    if missing_weights:
+        issues.append("V2 weight key(s) missing from specs: " + ", ".join(missing_weights))
+    if not mos_devices:
+        issues.append("No MOS devices were parsed from project.")
+    if netlist_text and netlist_path is not None and not netlist_path.is_file():
+        issues.append(f"Netlist path does not exist: {netlist_path}")
+
+    diagnostic = {
+        "status": "ok" if not issues else "warning",
+        "issues": issues,
+        "project": str(project_path),
+        "netlist": {
+            "path": netlist_text,
+            "exists": bool(netlist_path and netlist_path.is_file()),
+        },
+        "engine": {
+            "configured": engine_text,
+            "resolved": str(engine_root),
+            "error": engine_error,
+            "source_engine": engine_source,
+            "compiled_engine": engine_compiled,
+            "core_executable": str(core_exe or ""),
+            "runner_would_delegate_optimize": would_delegate,
+        },
+        "library": {
+            "cache_dir": str(cache_dir),
+            "ready": marker is not None,
+            "marker": str(marker or ""),
+            "direct_pair": [str(p) for p in direct_pair] if direct_pair else [],
+            "child_pair": [str(p) for p in child_pair] if child_pair else [],
+            "model_path": str(lib.get("model_path") or ""),
+            "model_path_stem": model_stem(lib.get("model_path")),
+            "inferred_model_path_for_cache_only": inferred_model_path,
+            "expected_markers": [str(p) for p in expected_library_markers(lib, project_path)[:10]],
+        },
+        "devices": {
+            "total": len(devices),
+            "mos": len(mos_devices),
+            "passives": len(passive_devices),
+            "missing_current": missing_current,
+        },
+        "specs": {
+            "weights": weights,
+            "missing_weight_keys": missing_weights,
+            "gain_min": specs.get("gain_min"),
+            "gbw": specs.get("gbw"),
+            "pm_min": specs.get("pm_min"),
+            "load_cap": specs.get("load_cap"),
+        },
+        "cadence": project.get("cadence", {}),
+        "outputs": {
+            "telemetry_path": project.get("telemetry_path", ""),
+            "result_path": project.get("result_path", ""),
+            "skill_result_path": project.get("skill_result_path", ""),
+        },
+    }
+    print(json.dumps(diagnostic, indent=2, ensure_ascii=False))
+
+
 def run_self_test() -> None:
     info: Dict[str, Any] = {
         "status": "ok",
@@ -1265,7 +1383,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     parser = argparse.ArgumentParser(description="AmpSys headless runner")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("build-library", "optimize", "writeback"):
+    for name in ("build-library", "optimize", "writeback", "diagnose"):
         p = sub.add_parser(name)
         p.add_argument("--project", required=True)
     sub.add_parser("self-test")
@@ -1280,9 +1398,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     elif args.cmd == "writeback":
         assert project_path is not None
         run_writeback(project_path)
+    elif args.cmd == "diagnose":
+        assert project_path is not None
+        diagnose_project(project_path)
     elif args.cmd == "self-test":
         run_self_test()
 
 
 if __name__ == "__main__":
     main()
+
+

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """AmpSys release environment checker."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("AMPSYS_PLUGIN_ROOT", "") or Path(__file__).resolve().parents[1]).expanduser().resolve()
 RUNNER = ROOT / "cli" / "ampsys_runner.py"
 LOG = ROOT / "ampsys_environment.log"
 
@@ -93,6 +93,13 @@ def write_first_available(payload: dict[str, object], candidates: list[Path]) ->
             return path
         except Exception as exc:
             errors.append({"path": str(path), "error": str(exc)})
+    fallback = Path.cwd() / "ampsys_environment.log"
+    payload["log_fallback_errors"] = errors
+    try:
+        fallback.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        return fallback
+    except Exception as exc:
+        errors.append({"path": str(fallback), "error": str(exc)})
     fallback = Path.home() / "ampsys_environment.log"
     payload["log_fallback_errors"] = errors
     try:
@@ -123,23 +130,45 @@ def main() -> int:
         payload["tkinter"] = "error"
         payload["tkinter_error"] = str(exc)
 
-    cmd = py_command() + [str(RUNNER), "self-test"]
-    payload["self_test_command"] = cmd
+    cmd = py_command()
+    payload["python_command"] = cmd
+    quick_code = (
+        "import json, os, sys; "
+        f"sys.path.insert(0, {str(ROOT / 'cli')!r}); "
+        "import ampsys_gui, ampsys_runner; "
+        "os.environ['AMPSYS_PLUGIN_ROOT']=str(ampsys_gui.ROOT); "
+        "os.environ['AMPSYS_ENGINE_ROOT']=str(ampsys_gui.DEFAULT_ENGINE_ROOT); "
+        "core=ampsys_runner.find_core_executable(); "
+        "print(json.dumps({"
+        "'gui_import':'ok',"
+        "'default_engine_root':str(ampsys_gui.DEFAULT_ENGINE_ROOT),"
+        "'default_cache_dir':str(ampsys_gui.default_lut_cache_dir(ampsys_gui.WORKSPACE)),"
+        "'default_temp_dir':str(ampsys_gui.default_runtime_temp_dir(ampsys_gui.WORKSPACE)),"
+        "'objective_weight_defaults':ampsys_gui.OBJECTIVE_WEIGHT_DEFAULTS,"
+        "'core_executable':str(core or ''),"
+        "'source_engine':ampsys_runner.has_source_engine(ampsys_gui.DEFAULT_ENGINE_ROOT),"
+        "'compiled_engine':ampsys_runner.has_compiled_engine(ampsys_gui.DEFAULT_ENGINE_ROOT),"
+        "'runner_would_delegate':ampsys_runner.should_delegate_to_core('optimize', ['optimize']),"
+        "'runner_would_delegate_self_test':ampsys_runner.should_delegate_to_core('self-test', ['self-test']),"
+        "'runner_would_delegate_optimize':ampsys_runner.should_delegate_to_core('optimize', ['optimize'])"
+        "}, ensure_ascii=False))"
+    )
+    payload["quick_check_command"] = cmd + ["-X", "utf8", "-c", quick_code]
     try:
         proc = subprocess.run(
-            cmd,
+            payload["quick_check_command"],
             cwd=str(ROOT),
             text=True,
             encoding="utf-8",
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=120,
+            timeout=30,
         )
-        payload["self_test_returncode"] = proc.returncode
-        payload["self_test_output"] = proc.stdout
+        payload["quick_check_returncode"] = proc.returncode
+        payload["quick_check_output"] = proc.stdout
         try:
-            payload["self_test_json"] = json.loads(proc.stdout)
+            payload["quick_check_json"] = json.loads(proc.stdout)
         except Exception:
             pass
         payload["status"] = "ok" if proc.returncode == 0 and payload.get("tkinter") == "ok" else "error"
@@ -155,3 +184,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -108,7 +108,7 @@ procedure(ampsysApplyParamAction(inst action)
     kind = car(action)
     ampsysLog(sprintf(nil "Apply param action: inst=%s action=%L" inst~>name action))
     cond(
-      (equal(kind "width")
+      ((equal(kind "width"))
         aliases = cadddr(action)
         if(equal(ampsys_writeback_width_mode "finger")
         then
@@ -126,16 +126,16 @@ procedure(ampsysApplyParamAction(inst action)
           inst~>name ampsys_writeback_width_mode useFinger value cadr(action) caddr(action)))
         ampsysSetBestInstParam(inst aliases value)
       )
-      (equal(kind "length")
+      ((equal(kind "length"))
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      (equal(kind "fingers")
+      ((equal(kind "fingers"))
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      (equal(kind "multiplier")
+      ((equal(kind "multiplier"))
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
-      (equal(kind "value")
+      ((equal(kind "value"))
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
       )
       (t
@@ -146,7 +146,7 @@ procedure(ampsysApplyParamAction(inst action)
 )
 
 procedure(ampsysApplyResultToCell(lib cell view)
-  prog((cv applied missed nRecords)
+  let((cv applied missed nRecords)
     nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
     ampsysLog(sprintf(nil "Apply result to cell start: lib=%s cell=%s view=%s records=%d"
       lib cell view nRecords))
@@ -163,27 +163,17 @@ procedure(ampsysApplyResultToCell(lib cell view)
     applied = 0
     missed = 0
     foreach(entry ampsys_result_devices
-      let((inst params instName paramFailures)
+      let((inst params instName)
         instName = car(entry)
         params = cadr(entry)
-        paramFailures = 0
         inst = ampsysFindInstance(cv instName)
         if(inst
         then
           foreach(pair params
-            unless(errset(ampsysApplyParamAction(inst pair) t)
-              paramFailures = paramFailures + 1
-              ampsysLog(sprintf(nil "WARN: writeback action failed: inst=%s action=%L" instName pair))
-            )
+            ampsysApplyParamAction(inst pair)
           )
-          if(paramFailures > 0
-          then
-            missed = missed + 1
-            ampsysLog(sprintf(nil "WARN: instance %s had %d writeback action failure(s)" instName paramFailures))
-          else
-            applied = applied + 1
-            printf("[AmpSys] Applied %s\n" instName)
-          )
+          applied = applied + 1
+          printf("[AmpSys] Applied %s\n" instName)
         else
           missed = missed + 1
           ampsysLog(sprintf(nil "WARN: instance %s not found during writeback" instName))
@@ -193,16 +183,12 @@ procedure(ampsysApplyResultToCell(lib cell view)
     dbSave(cv)
     ampsysLog(sprintf(nil "Writeback complete: applied=%d missed=%d saved=%s/%s/%s"
       applied missed lib cell view))
-    when(missed > 0
-      ampsysWarn(sprintf(nil "[AmpSys] Writeback finished with %d applied and %d missed or failed record(s).\n\nCheck ampsys_skill.log in the run workspace." applied missed))
-      return(nil)
-    )
-    return(t)
+    t
   )
 )
 
 procedure(ampsysApplyResultFile(resultFile)
-  prog((cv lib cell view nRecords)
+  let((cv lib cell view nRecords)
     ampsysLog(sprintf(nil "Apply result file start: %s" resultFile))
     unless(isFile(resultFile)
       ampsysWarn(sprintf(nil "[AmpSys] No result to apply yet.\nExpected file:\n%s\n\nRun optimization in the AmpSys GUI, then click Confirm and Apply in Cadence." resultFile))
@@ -240,12 +226,12 @@ procedure(ampsysApplyResultFile(resultFile)
       cell = cv~>cellName
       view = cv~>viewName
     )
-    return(ampsysApplyResultToCell(lib cell view))
+    ampsysApplyResultToCell(lib cell view)
   )
 )
 
 procedure(ampsysApplyLastResult()
-  prog((cv runDir resultFile)
+  let((cv runDir resultFile)
     ampsysLog("Menu action: Apply Last Result")
     cv = ampsysCurrentCV()
     unless(cv
@@ -256,7 +242,7 @@ procedure(ampsysApplyLastResult()
     runDir = ampsysProjectDir(cv~>libName cv~>cellName)
     resultFile = strcat(runDir "/ampsys_result.il")
     ampsysLog(sprintf(nil "Apply Last Result paths: runDir=%s resultFile=%s" runDir resultFile))
-    return(ampsysApplyResultFile(resultFile))
+    ampsysApplyResultFile(resultFile)
   )
 )
 

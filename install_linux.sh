@@ -86,7 +86,8 @@ for candidate in \
   fi
 done
 
-cat > "$HOME/bin/py" <<SHIM
+PY_SHIM="$HOME/bin/py"
+cat > "$PY_SHIM" <<SHIM
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "-3" ]]; then
   shift
@@ -121,11 +122,11 @@ done
 echo "AmpSys requires Python >= 3.8. Set AMPSYS_PYTHON3 to a valid python3 executable." >&2
 exit 127
 SHIM
-chmod +x "$HOME/bin/py"
+chmod +x "$PY_SHIM"
 
 export AMPSYS_PLUGIN_ROOT="$PLUGIN_ROOT"
 export AMPSYS_ENGINE_ROOT="$ENGINE_ROOT"
-export AMPSYS_PYCMD="py -3"
+export AMPSYS_PYCMD="$PY_SHIM -3"
 if [[ -n "$GUI_EXE" ]]; then
   export AMPSYS_GUI_EXE="$GUI_EXE"
 fi
@@ -161,7 +162,7 @@ if ! grep -q "AmpSys Cadence Plugin" "$BASHRC" 2>/dev/null; then
 fi
 bashrc_set_export "AMPSYS_PLUGIN_ROOT" "$PLUGIN_ROOT"
 bashrc_set_export "AMPSYS_ENGINE_ROOT" "$ENGINE_ROOT"
-bashrc_set_export "AMPSYS_PYCMD" "py -3"
+bashrc_set_export "AMPSYS_PYCMD" "$PY_SHIM -3"
 if [[ -n "$GUI_EXE" ]]; then
   bashrc_set_export "AMPSYS_GUI_EXE" "$GUI_EXE"
 fi
@@ -177,12 +178,12 @@ echo "  Plugin: $PLUGIN_ROOT"
 echo "  Engine: $ENGINE_ROOT"
 echo "  .cdsinit: $CDSINIT"
 echo "  Workspace: $PLUGIN_ROOT/workspace"
-echo "  Python command in Cadence: py -3"
+echo "  Python command in Cadence: $PY_SHIM -3"
 if [[ -n "$GUI_EXE" ]]; then
   echo "  Standalone GUI: $GUI_EXE"
 else
-  echo "  Standalone GUI: not found; Cadence will fall back to py -3"
+  echo "  Standalone GUI: not found; Cadence will fall back to $PY_SHIM -3"
 fi
-echo "  Environment check: py -3 $PLUGIN_ROOT/tools/check_environment.py"
+echo "  Environment check: $PY_SHIM -3 $PLUGIN_ROOT/tools/check_environment.py"
 echo "  Current shell refresh: source ~/.bashrc"
 echo "  Or temporary PATH: export PATH=\"\$HOME/bin:\$PATH\""

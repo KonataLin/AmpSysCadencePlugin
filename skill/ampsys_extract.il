@@ -36,7 +36,7 @@ procedure(ampsysGetTermOrder(libName cellName)
 )
 
 procedure(ampsysExportNetlist(lib cell view outFile)
-  prog((cv port nDev skipLibs subcktPins)
+  let((cv port nDev skipLibs subcktPins)
     ampsysLog(sprintf(nil "Export netlist start: lib=%s cell=%s view=%s outFile=%s" lib cell view outFile))
     cv = dbOpenCellViewByType(lib cell view nil "r")
     unless(cv
@@ -148,30 +148,17 @@ procedure(ampsysExportNetlist(lib cell view outFile)
     close(port)
     dbClose(cv)
     ampsysLog(sprintf(nil "Export netlist done: instances=%d outFile=%s" nDev outFile))
-    return(t)
+    t
   )
 )
 
 procedure(ampsysLaunchGUI(projectFile netlistFile lib cell view)
-  let((cmd status launchLog guiExe)
+  let((cmd status launchLog)
     launchLog = if(and(ampsys_current_run_dir nequal(ampsys_current_run_dir ""))
       then strcat(ampsys_current_run_dir "/ampsys_launch.log")
       else strcat(ampsys_work "/ampsys_launch.log"))
-    guiExe = ampsysGuiExecutable()
-    if(guiExe
-    then
-      if(ampsysOnWindows()
-      then
-        cmd = sprintf(nil "cmd /c start \"\" \"%s\" --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1"
-          guiExe projectFile netlistFile lib cell view launchLog)
-      else
-        cmd = sprintf(nil "\"%s\" --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1 &"
-          guiExe projectFile netlistFile lib cell view launchLog)
-      )
-    else
-      cmd = sprintf(nil "%s%s \"%s/tools/launch_gui.py\" --gui \"%s/ampsys_gui.py\" --log \"%s\" -- --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1%s"
-        ampsys_launch_prefix ampsys_pycmd ampsys_root ampsys_cli launchLog projectFile netlistFile lib cell view launchLog ampsys_launch_suffix)
-    )
+    cmd = sprintf(nil "%s%s \"%s/tools/launch_gui.py\" --gui \"%s/ampsys_gui.py\" --log \"%s\" -- --project \"%s\" --netlist \"%s\" --cadence-lib \"%s\" --cadence-cell \"%s\" --cadence-view \"%s\" >> \"%s\" 2>&1%s"
+      ampsys_launch_prefix ampsys_pycmd ampsys_root ampsys_cli launchLog projectFile netlistFile lib cell view launchLog ampsys_launch_suffix)
     ampsysLog(sprintf(nil "Launching GUI command: %s" cmd))
     status = errset(system(cmd))
     ampsysLog(sprintf(nil "GUI launch system status=%L launchLog=%s project=%s netlist=%s" status launchLog projectFile netlistFile))
@@ -179,7 +166,7 @@ procedure(ampsysLaunchGUI(projectFile netlistFile lib cell view)
 )
 
 procedure(ampsysExtractCurrentSchematic()
-  prog((cv lib cell view runDir netlist project)
+  let((cv lib cell view runDir netlist project)
     ampsysLog("Menu action: Extract Current Schematic")
     cv = ampsysCurrentCV()
     unless(cv
