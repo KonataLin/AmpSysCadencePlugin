@@ -284,11 +284,11 @@ LOWER_BETTER_METRICS = {"power", "noise", "area_um2"}
 OBJECTIVE_WEIGHT_DEFS = [
     ("fitness_b", "Gain priority", 1.20, "main", "validated"),
     ("fitness_a", "Bandwidth priority", 0.70, "main", "validated"),
+    ("fitness_e", "CMRR priority", 0.20, "main", "differential/eligible topologies"),
+    ("fitness_f", "PSRR priority", 0.10, "main", "topology dependent"),
     ("fitness_d", "Noise priority", 0.25, "main", "validated"),
     ("fitness_g", "Area pressure", 0.10, "main", "effective; conservative default"),
-    ("fitness_e", "CMRR priority", 0.20, "advanced", "differential/eligible topologies"),
-    ("fitness_f", "PSRR priority", 0.10, "advanced", "topology dependent"),
-    ("fitness_c", "Power priority", 0.00, "advanced", "fixed-current flow"),
+    ("fitness_c", "Power priority", 0.00, "hidden", "fixed-current flow"),
 ]
 OBJECTIVE_WEIGHT_DEFAULTS = {key: default for key, _label, default, _group, _note in OBJECTIVE_WEIGHT_DEFS}
 
@@ -1330,15 +1330,16 @@ class AmpSysGUI:
         self.field(specs, "Population", self.cfg_vars.vars["population_size"], 3, 2, field_key="config.population_size")
         self.field(specs, "Generations", self.cfg_vars.vars["max_generations"], 4, 0, field_key="config.max_generations")
         ttk.Label(specs, text="V2 Objective Priorities", style="Card.TLabel", font=self.font_bold).grid(row=5, column=0, columnspan=4, sticky="w", padx=12, pady=(12, 0))
-        ttk.Label(specs, text="Unit-normalized priorities. Gain/GBW/Noise/Area are the validated primary controls.", style="MutedCard.TLabel").grid(row=5, column=2, columnspan=2, sticky="e", padx=12, pady=(12, 0))
+        ttk.Label(specs, text="Unit-normalized V2 priorities. Fixed-current flow keeps Power internal.", style="MutedCard.TLabel").grid(row=5, column=2, columnspan=2, sticky="e", padx=12, pady=(12, 0))
         main_weights = [item for item in OBJECTIVE_WEIGHT_DEFS if item[3] == "main"]
         for idx, (key, label, default, _group, note) in enumerate(main_weights):
             self.objective_weight_control(specs, key, label, default, 6 + idx // 2, (idx % 2) * 2, note)
-        ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=8, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=9, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=9, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
-        ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=10, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
-        ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=11, column=0, columnspan=4, padx=12, sticky="w")
+        action_row = 6 + ((len(main_weights) + 1) // 2)
+        ttk.Button(specs, text="Check Setup", command=self.show_setup_check).grid(row=action_row, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Button(specs, text="Run Optimization", style="Accent.TButton", command=lambda: self.start_runner("optimize")).grid(row=action_row + 1, column=0, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Button(specs, text="Stop", style="Danger.TButton", command=self.stop_process).grid(row=action_row + 1, column=2, columnspan=2, padx=12, pady=10, sticky="ew")
+        ttk.Progressbar(specs, variable=self.progress_var, maximum=100, length=260).grid(row=action_row + 2, column=0, columnspan=4, padx=12, pady=(4, 2), sticky="ew")
+        ttk.Label(specs, textvariable=self.status_var, style="MutedCard.TLabel").grid(row=action_row + 3, column=0, columnspan=4, padx=12, sticky="w")
 
         row += 1
         settings = ttk.Frame(page, style="Shell.TFrame", padding=(18, 14, 18, 14))
@@ -1362,14 +1363,16 @@ class AmpSysGUI:
         self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
         self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
         self.field(self.settings_body, "Passive value aliases", self.settings_vars.vars["passive_value_aliases"], 3, 2, width=34, field_key="settings.passive_value_aliases")
-        ttk.Label(self.settings_body, text="Advanced V2 Priorities", style="Card.TLabel", font=self.font_bold).grid(row=4, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
-        ttk.Label(self.settings_body, text="CMRR/PSRR are topology dependent; power is mostly fixed by user currents.", style="MutedCard.TLabel").grid(row=4, column=2, columnspan=4, sticky="w", padx=6, pady=(14, 0))
         advanced_weights = [item for item in OBJECTIVE_WEIGHT_DEFS if item[3] == "advanced"]
-        for idx, (key, label, default, _group, note) in enumerate(advanced_weights):
-            self.objective_weight_control(self.settings_body, key, label, default, 5 + idx // 3, (idx % 3) * 2, note)
-        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=7, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
+        term_row = 4
+        if advanced_weights:
+            ttk.Label(self.settings_body, text="Advanced V2 Priorities", style="Card.TLabel", font=self.font_bold).grid(row=term_row, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
+            for idx, (key, label, default, _group, note) in enumerate(advanced_weights):
+                self.objective_weight_control(self.settings_body, key, label, default, term_row + 1 + idx // 3, (idx % 3) * 2, note)
+            term_row += 2 + ((len(advanced_weights) + 2) // 3)
+        ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=term_row, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
         term_cols = ("name", "type", "model", "raw", "order", "dgbs")
-        self.term_tree = self.tree_with_scrollbars(self.settings_body, 8, 6, term_cols, height=5)
+        self.term_tree = self.tree_with_scrollbars(self.settings_body, term_row + 1, 6, term_cols, height=5)
         for col, text, width in [
             ("name", "Name", 100),
             ("type", "Type", 76),
@@ -2429,4 +2432,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 
