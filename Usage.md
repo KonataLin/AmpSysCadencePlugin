@@ -1,5 +1,10 @@
 # AmpSys Cadence Plugin 使用指南
 
+> [!IMPORTANT]
+> AmpSys Cadence Plugin 只作为模拟电路初版设计辅助工具，不替代完整仿真、验证和流片前 sign-off。
+> 本插件不包含任何 PDK/model 工艺库文件，不提供 HSPICE、Cadence、Spectre、Calibre 等仿真器或商业软件授权。
+> 本插件始终公益免费提供；因使用本插件导致的设计错误、流片失败或经济损失，作者概不负责。
+
 这份文档面向第一次安装和第一次跑通的用户。推荐工作流是：
 
 ```mermaid

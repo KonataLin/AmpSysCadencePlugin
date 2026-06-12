@@ -2,20 +2,21 @@
 
 # AmpSys Cadence Plugin
 
-**从 Cadence Virtuoso schematic 一键进入 AmpSys 自动尺寸优化流程**
+**从 Cadence Virtuoso schematic 到 AmpSys 自动尺寸优化的一体化插件**
 
-[![Platform](https://img.shields.io/badge/platform-Windows%20x86__64%20%7C%20Linux%20x86__64-2563eb)](#平台支持)
-[![Core](https://img.shields.io/badge/core-protected%20binary-111827)](#发布包结构)
-[![Cadence](https://img.shields.io/badge/Cadence-Virtuoso-10b981)](#cadence-内使用)
+[![Release](https://img.shields.io/github/v/release/KonataLin/AmpSysCadencePlugin?include_prereleases&label=release&color=2563eb)](https://github.com/KonataLin/AmpSysCadencePlugin/releases)
+[![Tested](https://img.shields.io/badge/tested-SMIC18MMRF%20180nm-10b981)](https://github.com/KonataLin/AmpSysCadencePlugin/releases/tag/v0.1.0-alpha.3)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-111827)](#平台支持)
+[![Core](https://img.shields.io/badge/core-protected%20binary-7c3aed)](#开源边界)
 [![Issues](https://img.shields.io/github/issues/KonataLin/AmpSysCadencePlugin?label=issues&color=dc2626)](https://github.com/KonataLin/AmpSysCadencePlugin/issues)
 
 <p>
-  <a href="Usage.md"><b>中文使用指南</b></a>
-  &nbsp;|&nbsp;
+  <a href="Usage.md"><b>使用指南</b></a>
+  &nbsp;·&nbsp;
   <a href="https://github.com/KonataLin/AmpSysCadencePlugin/releases"><b>下载 Release</b></a>
-  &nbsp;|&nbsp;
-  <a href="https://github.com/KonataLin/AmpSysCadencePlugin/issues"><b>提交 Issue</b></a>
-  &nbsp;|&nbsp;
+  &nbsp;·&nbsp;
+  <a href="https://github.com/KonataLin/AmpSysCadencePlugin/issues/new/choose"><b>反馈问题</b></a>
+  &nbsp;·&nbsp;
   <a href="https://www.afdian.com/a/LocyDragon"><b>赞助支持</b></a>
 </p>
 
@@ -23,40 +24,79 @@
 
 ---
 
-AmpSys Cadence Plugin 把 Cadence Virtuoso、Python GUI 和 AmpSys 优化核心串成一个完整流程。Release 包内置 Windows/Linux standalone GUI 和 protected core，普通用户不需要安装 NumPy/SciPy/Numba 等内部依赖。
+> [!IMPORTANT]
+> **重要声明 / Safety Notice**
+>
+> AmpSys Cadence Plugin 只用于模拟电路**初版设计辅助、尺寸探索和流程验证**，不能替代设计者的完整仿真、版图验证、PVT/Monte Carlo/可靠性检查和流片前 sign-off。
+>
+> 本插件不包含任何工艺库文件、PDK、model 文件或商业仿真器，也不提供 HSPICE、Cadence、Spectre、Calibre 等第三方软件授权。用户必须自行合法配置工艺库、仿真器和 EDA 环境。
+>
+> 本插件始终以公益免费方式提供。因使用、本地修改、二次分发或误用本插件造成的设计错误、项目延期、流片失败、经济损失或其它后果，作者概不负责。
+
+AmpSys Cadence Plugin 把 **Virtuoso schematic 抽取**、**Python GUI 配置**、**AmpSys protected core 优化**、**SKILL 尺寸写回** 串成一个可重复的闭环。典型工作流是：Windows 侧用 HSPICE 建 LUT，Linux/Virtuoso 侧使用 cache-only 快速优化并写回器件尺寸。
 
 ```mermaid
 flowchart LR
-  A["Windows<br/>HSPICE 建 LUT"] --> B["复制完整<br/>LUT cache"]
+  A["Windows<br/>HSPICE 建 LUT"] --> B["LUT cache<br/>nmos/pmos pkl"]
   B --> C["Linux / Virtuoso<br/>打开 schematic"]
-  C --> D["AmpSys 菜单<br/>抽取当前原理图"]
-  D --> E["Python GUI<br/>设置电流与指标"]
-  E --> F["Protected Core<br/>fast LUT 优化"]
-  F --> G["SKILL<br/>写回 W/L/NF"]
+  C --> D["AmpSys 菜单<br/>Extract Current Schematic"]
+  D --> E["GUI<br/>电流、spec、权重"]
+  E --> F["Protected Core<br/>LUT fast optimize"]
+  F --> G["SKILL<br/>写回 W / L / fingers"]
 ```
 
-## 它解决什么
+## 当前状态
 
-| 痛点 | 插件做法 |
+| 项目 | 状态 |
 | --- | --- |
-| 手动改 MOS 尺寸、反复试参数很慢 | 从 schematic 抽取器件，优化后自动生成写回结果 |
-| Windows 有 HSPICE，Linux 才有 Virtuoso | Windows 建 LUT，Linux/Virtuoso 只使用 cache，不再跑 HSPICE |
-| Cadence、Python、优化核心之间难排错 | 每个环节都写 `.log`、`telemetry.jsonl`、`result.json` |
-| AmpSys 算法不能开源 | GUI/SKILL/wrapper 开源，核心算法以受保护二进制发布 |
+| 最新测试版 | `v0.1.0-alpha.3` |
+| 已实测 PDK | SMIC18MMRF / SMIC 180nm RF |
+| 已实测链路 | Linux Virtuoso 抽取、GUI 优化、CDF 写回 |
+| Windows 用途 | GUI、HSPICE LUT 建表、环境检查 |
+| Linux 用途 | Virtuoso 集成、cache-only 优化、SKILL 写回 |
+
+## 亮点
+
+| 能力 | 说明 |
+| --- | --- |
+| 从 schematic 进入优化 | 在 Virtuoso 菜单中抽取当前打开的 schematic，无需手写 netlist |
+| Windows 建表，Linux 使用 | 适合 Windows 有 HSPICE、Linux 有 Cadence/Virtuoso 的常见环境 |
+| 可视化 GUI | LUT、器件电流、spec、权重、收敛过程和结果在一个流程页里完成 |
+| CDF 写回 | 支持 `W / L / fingers / m` 等常见 CDF 参数别名，SMIC18MMRF 已验证 `Total Width + Finger Width` 写回 |
+| 详细日志 | GUI、SKILL、runner、optimization、telemetry 都会落盘，方便定位环境问题 |
+| 核心保护 | GUI/SKILL/wrapper 公开，AmpSys 内部算法以 protected binary 发布 |
 
 ## 平台支持
 
 | 平台 | 状态 | 用途 |
 | --- | --- | --- |
 | Windows x86_64 | 支持 | standalone GUI、HSPICE LUT 建表、环境检查 |
-| Linux x86_64, glibc >= 2.17 | 支持 | standalone GUI、Virtuoso 集成、cache-only 优化、SKILL 写回 |
+| Linux x86_64, glibc >= 2.17 | 支持 | Virtuoso 菜单、standalone GUI、cache-only 优化、SKILL 写回 |
 | macOS / ARM / Alpine musl / 32-bit | 暂不支持 | 当前没有对应 protected core |
 
+## 获取方式
+
+普通用户请下载 GitHub Release 里的完整 zip：
+
+[下载最新 Release](https://github.com/KonataLin/AmpSysCadencePlugin/releases/latest)
+
+Release 包应包含：
+
+```text
+cli/                    GUI 脚本与公开 runner wrapper
+gui/                    Windows/Linux standalone GUI
+skill/                  Virtuoso 菜单、schematic 抽取、结果写回
+tools/                  环境检查与 GUI launcher
+core/                   Windows/Linux protected AmpSys core
+install_windows.ps1     Windows 安装脚本
+install_linux.sh        Linux/Virtuoso 安装脚本
+Usage.md                中文使用指南
+README.md               项目主页
+```
+
+> 直接 `git clone` 得到的是公开 wrapper 和工程文件，不包含可发布的 protected core。最终用户请优先使用 Release zip。
+
 ## 快速开始
-
-完整流程请看：
-
-[Usage.md](Usage.md)
 
 Windows 安装：
 
@@ -80,71 +120,22 @@ source ~/.bashrc
 py -3 <plugin-root>/tools/check_environment.py
 ```
 
-Release 包自带 GUI 可执行入口：
+完整流程请看：[Usage.md](Usage.md)
 
-```text
-gui/windows_amd64/ampsys_gui/ampsys_gui.exe
-gui/linux_x86_64/ampsys_gui/ampsys_gui
-```
+## 推荐工作流
 
-`check_environment.py` 是推荐诊断工具；没有系统 Python 时，Cadence 仍会优先使用 standalone GUI。
-
-环境检查应至少看到：
-
-```text
-"status": "ok"
-"tkinter": "ok"
-```
-
-## Cadence 内使用
-
-1. Windows 侧用 HSPICE 建好 LUT cache。
-2. 把完整 cache 目录复制到 Linux。
-3. 从已加载 AmpSys 环境变量的 shell 启动 `virtuoso`。
-4. 打开真正包含待优化器件的 schematic。
+1. 在 Windows GUI 中填写 HSPICE model、NMOS/PMOS 名称、工艺角、温度和 cache 目录。
+2. 点击 `Build Library` 生成 LUT cache。
+3. 将完整 cache 目录复制到 Linux。
+4. 在 Linux/Virtuoso 中打开待优化 schematic。
 5. 点击 `AmpSys -> Extract Current Schematic...`。
-6. 在 GUI 里确认 `LUT Cache = OK`，填写 MOS 电流和目标指标。
+6. 在 GUI 里确认 LUT、器件、电流、spec 和权重。
 7. 点击 `Run Optimization`。
-8. 完成后点击 `Confirm and Apply in Cadence` 写回尺寸。
+8. 结果完成后点击 `Confirm and Apply in Cadence` 写回 CDF 参数。
 
-## 发布包结构
+## 日志与诊断
 
-```text
-cli/                    Python GUI 与公开 runner wrapper
-gui/                    Windows/Linux standalone GUI
-skill/                  Cadence SKILL 菜单、抽取和写回
-tools/                  环境检查与 GUI launcher
-core/                   Windows/Linux protected AmpSys core
-install_windows.ps1     Windows 安装脚本
-install_linux.sh        Linux/Virtuoso 安装脚本
-Usage.md                完整中文使用指南
-release_manifest.json   release 元数据
-```
-
-Windows core：
-
-```text
-core/windows_amd64/ampsys_core/ampsys_core.exe
-```
-
-Linux core：
-
-```text
-core/linux_x86_64.tar.gz
-```
-
-不要发布内部源码目录，例如 `AmpSys/`、`yami/`、`TheScanner/`、`acsolver/`。用户侧发布的是 GUI、SKILL、wrapper、安装脚本和受保护 core。
-
-## 本版重点
-
-- 默认 quiet 优化：verbose 关闭时，进度条和动态 metric 仍通过 `telemetry.jsonl` 刷新。
-- 对外隐藏 raw fitness：GUI、日志、telemetry、result 中统一显示 Convergence/收敛度，不暴露具体 fitness 数值。
-- 动态指标按电路能力显示：差分结果会显示 CMRR、PSRR、Area；单端没有的指标不会硬塞到图里。
-- W/L 写回默认保留 2 位小数，可在 GUI 底部 `Settings -> Geometry decimals` 修改。
-
-## 日志与反馈
-
-遇到问题时，请优先附上相关日志：
+如果遇到问题，请在 Issue 中附上相关日志：
 
 ```text
 ampsys_skill.log
@@ -156,10 +147,35 @@ result.json
 ampsys_result.il
 ```
 
-反馈入口：
+常用入口：
 
-[GitHub Issues](https://github.com/KonataLin/AmpSysCadencePlugin/issues)
+```text
+Windows GUI: gui/windows_amd64/ampsys_gui/ampsys_gui.exe
+Linux GUI:   gui/linux_x86_64/ampsys_gui/ampsys_gui
+Env check:   tools/check_environment.py
+```
 
-赞助支持：
+## 开源边界
 
-[爱发电 LocyDragon](https://www.afdian.com/a/LocyDragon)
+本仓库公开：
+
+- GUI 与 runner wrapper
+- Cadence SKILL 集成
+- 安装脚本与使用文档
+- Issue/Release/诊断模板
+
+不公开：
+
+- `AmpSys/`
+- `yami/`
+- `TheScanner/`
+- `acsolver/`
+- 其它内部算法源码
+
+这些核心能力通过 Release 包中的 protected binary 提供。
+
+## 反馈与支持
+
+- Bug / 兼容性问题：[GitHub Issues](https://github.com/KonataLin/AmpSysCadencePlugin/issues/new/choose)
+- Release 下载：[GitHub Releases](https://github.com/KonataLin/AmpSysCadencePlugin/releases)
+- 赞助支持：[爱发电 LocyDragon](https://www.afdian.com/a/LocyDragon)

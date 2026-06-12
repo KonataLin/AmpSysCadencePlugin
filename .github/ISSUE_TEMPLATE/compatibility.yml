@@ -1,0 +1,52 @@
+name: Compatibility report / 兼容性报告
+description: Report a tested Cadence, PDK, OS, or HSPICE environment.
+title: "[Compat] "
+labels:
+  - compatibility
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report whether AmpSys Cadence Plugin works in your environment.
+        可以用这个模板报告某个 PDK/Cadence/系统组合是否跑通。
+  - type: input
+    id: release
+    attributes:
+      label: Release
+      placeholder: v0.1.0-alpha.3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, Ubuntu 22.04, RHEL/CentOS, WSL2, etc.
+    validations:
+      required: true
+  - type: input
+    id: cadence
+    attributes:
+      label: Cadence version
+      placeholder: IC617 / ICADVM / Virtuoso version
+  - type: input
+    id: pdk
+    attributes:
+      label: PDK
+      placeholder: SMIC18MMRF, GF180, TSMC, custom PDK...
+  - type: dropdown
+    id: status
+    attributes:
+      label: Result
+      options:
+        - Works end-to-end
+        - Works with workaround
+        - Fails
+        - Not fully tested
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / workaround
+      placeholder: What worked? What needed adjustment? Include CDF aliases if relevant.
+

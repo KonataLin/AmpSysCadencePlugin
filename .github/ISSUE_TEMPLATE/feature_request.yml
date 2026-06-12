@@ -1,0 +1,28 @@
+name: Feature request / 功能建议
+description: Suggest an improvement for the GUI, Cadence integration, docs, or release workflow.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow pain are you trying to solve?
+      placeholder: It is hard to configure terminal order for this PDK...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should AmpSys Cadence Plugin do?
+      placeholder: Add a settings preset for...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      placeholder: PDK, Cadence version, screenshots, examples, or related logs.
+

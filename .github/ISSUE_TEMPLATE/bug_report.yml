@@ -1,4 +1,4 @@
-name: Bug report
+name: Bug report / 问题反馈
 description: Report an AmpSys Cadence Plugin problem.
 title: "[Bug] "
 labels:
@@ -8,12 +8,13 @@ body:
     attributes:
       value: |
         Thanks for reporting. Please include logs when possible so the issue can be reproduced.
+        请尽量附上日志；Cadence/Python/HSPICE/PDK 环境差异很大，日志能显著加快定位。
   - type: textarea
     id: summary
     attributes:
       label: Problem
       description: What went wrong?
-      placeholder: GUI did not open, LUT cache stayed NO, optimization failed, writeback failed, etc.
+      placeholder: GUI did not open, LUT cache stayed NO, optimization failed, writeback failed, CDF width was wrong, etc.
     validations:
       required: true
   - type: dropdown
@@ -31,7 +32,12 @@ body:
     id: version
     attributes:
       label: Commit or release
-      placeholder: 5b661e6 or v0.1.0
+      placeholder: v0.1.0-alpha.3 or commit hash
+  - type: input
+    id: cadence
+    attributes:
+      label: Cadence / PDK
+      placeholder: IC617, SMIC18MMRF, custom PDK, etc.
   - type: textarea
     id: steps
     attributes:
@@ -50,4 +56,7 @@ body:
         ampsys_launch.log
         ampsys_gui.log
         ampsys_optimize.log
+        telemetry.jsonl
+        result.json
+        ampsys_result.il
       render: text
