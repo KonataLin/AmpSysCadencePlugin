@@ -1066,7 +1066,7 @@ class AmpSysGUI:
 
         for key in ("nmos_terminal_order", "pmos_terminal_order"):
             self.set_entry_state(f"settings.{key}", "ok" if self.terminal_order_valid(self.settings_vars.get(key, "")) else "bad")
-        for key in ("width_aliases", "length_aliases", "finger_aliases", "passive_value_aliases"):
+        for key in ("width_aliases", "finger_width_aliases", "length_aliases", "finger_aliases", "passive_value_aliases"):
             self.set_entry_state(f"settings.{key}", "ok" if split_csv(str(self.settings_vars.get(key, "")).replace(" ", ",")) else "bad")
         self.set_entry_state("settings.multiplier_aliases", "ok" if str(self.settings_vars.get("multiplier_aliases", "")).strip() else "neutral")
         self.set_entry_state("settings.multiplier_value", "ok" if str(self.settings_vars.get("multiplier_value", "")).strip() else "neutral")
@@ -1187,6 +1187,7 @@ class AmpSysGUI:
         settings = self.settings_vars.as_strings()
         for key, label in (
             ("width_aliases", "Width aliases"),
+            ("finger_width_aliases", "Finger-width aliases"),
             ("length_aliases", "Length aliases"),
             ("finger_aliases", "Finger aliases"),
             ("passive_value_aliases", "Passive value aliases"),
@@ -1357,10 +1358,11 @@ class AmpSysGUI:
         self.field(self.settings_body, "PMOS terminal order", self.settings_vars.vars["pmos_terminal_order"], 0, 2, field_key="settings.pmos_terminal_order")
         self.combo(self.settings_body, "Width writeback", self.settings_vars.vars["width_mode"], 0, 4, ("auto", "finger", "total"))
         self.field(self.settings_body, "Width aliases", self.settings_vars.vars["width_aliases"], 1, 0, width=34, field_key="settings.width_aliases")
-        self.field(self.settings_body, "Length aliases", self.settings_vars.vars["length_aliases"], 1, 2, width=34, field_key="settings.length_aliases")
+        self.field(self.settings_body, "Finger-width aliases", self.settings_vars.vars["finger_width_aliases"], 1, 2, width=34, field_key="settings.finger_width_aliases")
         self.field(self.settings_body, "Geometry decimals", self.settings_vars.vars["geometry_decimals"], 1, 4, field_key="settings.geometry_decimals")
-        self.field(self.settings_body, "Finger aliases", self.settings_vars.vars["finger_aliases"], 2, 0, width=34, field_key="settings.finger_aliases")
-        self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 2, width=34, field_key="settings.multiplier_aliases")
+        self.field(self.settings_body, "Length aliases", self.settings_vars.vars["length_aliases"], 2, 0, width=34, field_key="settings.length_aliases")
+        self.field(self.settings_body, "Finger aliases", self.settings_vars.vars["finger_aliases"], 2, 2, width=34, field_key="settings.finger_aliases")
+        self.field(self.settings_body, "Multiplier aliases", self.settings_vars.vars["multiplier_aliases"], 2, 4, width=34, field_key="settings.multiplier_aliases")
         self.field(self.settings_body, "Multiplier value", self.settings_vars.vars["multiplier_value"], 3, 0, field_key="settings.multiplier_value")
         self.field(self.settings_body, "Passive value aliases", self.settings_vars.vars["passive_value_aliases"], 3, 2, width=34, field_key="settings.passive_value_aliases")
         advanced_weights = [item for item in OBJECTIVE_WEIGHT_DEFS if item[3] == "advanced"]

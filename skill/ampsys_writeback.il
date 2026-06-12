@@ -7,6 +7,7 @@ defvar(ampsys_result_lib "")
 defvar(ampsys_result_cell "")
 defvar(ampsys_result_view "schematic")
 defvar(ampsys_writeback_width_mode "auto")
+defvar(ampsys_writeback_finger_width_aliases nil)
 defvar(ampsys_writeback_finger_aliases nil)
 
 procedure(ampsysFindInstance(cv instName)
@@ -40,6 +41,31 @@ procedure(ampsysFindCDFParam(inst pname)
   )
 )
 
+procedure(ampsysFindCDFParamByPrompt(inst pattern)
+  let((cdfId found param prompt pname)
+    cdfId = nil
+    found = nil
+    errset(cdfId = cdfGetInstCDF(inst))
+    when(cdfId
+      foreach(param cdfId~>parameters
+        unless(found
+          prompt = if(param~>prompt then param~>prompt else "")
+          pname = if(param~>name then param~>name else "")
+          when(or(rexMatchp(pattern prompt) rexMatchp(pattern pname))
+            ampsysLog(sprintf(nil "Prompt alias exists: inst=%s name=%s prompt=%s pattern=%s"
+              inst~>name pname prompt pattern))
+            found = param
+          )
+        )
+      )
+    )
+    unless(found
+      ampsysLog(sprintf(nil "Prompt alias missing: inst=%s pattern=%s" inst~>name pattern))
+    )
+    found
+  )
+)
+
 procedure(ampsysAnyParamExists(inst names)
   let((found)
     found = nil
@@ -53,6 +79,25 @@ procedure(ampsysAnyParamExists(inst names)
       )
     )
     found
+  )
+)
+
+procedure(ampsysSetCDFParamObject(inst param pval)
+  let((pname ok)
+    ok = nil
+    when(param
+      pname = param~>name
+      ampsysLog(sprintf(nil "Write CDF param object: inst=%s param=%s prompt=%s value=%s"
+        inst~>name pname param~>prompt pval))
+      param~>value = pval
+      ok = t
+      when(param~>callback
+        ampsysLog(sprintf(nil "Run CDF callback: inst=%s param=%s callback=%s"
+          inst~>name pname param~>callback))
+        errset(evalstring(param~>callback))
+      )
+    )
+    ok
   )
 )
 
@@ -75,6 +120,32 @@ procedure(ampsysSetInstParam(inst pname pval)
         errset(dbReplaceProp(inst pname "string" pval))
         ok = t
       )
+    )
+    ok
+  )
+)
+
+procedure(ampsysSetExistingInstParam(inst aliases pval)
+  let((chosen ok)
+    chosen = nil
+    ok = nil
+    ampsysLog(sprintf(nil "Choose existing writeback alias: inst=%s aliases=%L value=%s" inst~>name aliases pval))
+    when(listp(aliases)
+      foreach(pname aliases
+        unless(chosen
+          if(ampsysFindCDFParam(inst pname)
+          then
+            ampsysLog(sprintf(nil "Alias exists: inst=%s alias=%s" inst~>name pname))
+            chosen = pname
+          else
+            ampsysLog(sprintf(nil "Alias missing: inst=%s alias=%s" inst~>name pname))
+          )
+        )
+      )
+    )
+    when(chosen
+      ampsysLog(sprintf(nil "Chosen existing writeback alias: inst=%s alias=%s value=%s" inst~>name chosen pval))
+      ok = ampsysSetInstParam(inst chosen pval)
     )
     ok
   )
@@ -107,6 +178,54 @@ procedure(ampsysSetBestInstParam(inst aliases pval)
   )
 )
 
+procedure(ampsysSetFingerWidthParam(inst fingerAliases fallbackAliases pval)
+  let((param ok)
+    ok = nil
+    param = ampsysFindCDFParamByPrompt(inst "[Ff]inger.*[Ww]idth")
+    when(param
+      ok = ampsysSetCDFParamObject(inst param pval)
+    )
+    unless(ok
+      ok = ampsysSetExistingInstParam(inst fingerAliases pval)
+    )
+    unless(ok
+      ampsysLog(sprintf(nil "Finger width CDF param not found; fallback to generic width aliases: inst=%s value=%s"
+        inst~>name pval))
+      ok = ampsysSetBestInstParam(inst fallbackAliases pval)
+    )
+    ok
+  )
+)
+
+procedure(ampsysSetTotalWidthParam(inst aliases pval)
+  let((param ok)
+    ok = nil
+    param = ampsysFindCDFParamByPrompt(inst "[Tt]otal.*[Ww]idth")
+    when(param
+      ok = ampsysSetCDFParamObject(inst param pval)
+    )
+    unless(ok
+      ok = ampsysSetBestInstParam(inst aliases pval)
+    )
+    ok
+  )
+)
+
+procedure(ampsysSetExplicitTotalWidthParam(inst pval)
+  let((param ok)
+    ok = nil
+    param = ampsysFindCDFParamByPrompt(inst "[Tt]otal.*[Ww]idth")
+    when(param
+      ok = ampsysSetCDFParamObject(inst param pval)
+    )
+    unless(ok
+      ampsysLog(sprintf(nil "Explicit total width CDF param not found; skip generic fallback: inst=%s value=%s"
+        inst~>name pval))
+    )
+    ok
+  )
+)
+
 procedure(ampsysApplyParamAction(inst action)
   let((kind aliases value useFinger)
     kind = car(action)
@@ -128,7 +247,13 @@ procedure(ampsysApplyParamAction(inst action)
         value = if(useFinger then cadr(action) else caddr(action))
         ampsysLog(sprintf(nil "Width writeback decision: inst=%s mode=%s useFinger=%L value=%s fingerValue=%s totalValue=%s"
           inst~>name ampsys_writeback_width_mode useFinger value cadr(action) caddr(action)))
-        ampsysSetBestInstParam(inst aliases value)
+        if(useFinger
+        then
+          ampsysSetFingerWidthParam(inst ampsys_writeback_finger_width_aliases aliases value)
+          ampsysSetExplicitTotalWidthParam(inst caddr(action))
+        else
+          ampsysSetTotalWidthParam(inst aliases value)
+        )
       )
       ("length"
         ampsysSetBestInstParam(inst caddr(action) cadr(action))
@@ -200,17 +325,18 @@ procedure(ampsysApplyResultFile(resultFile)
     )
     ampsys_result_devices = nil
     ampsys_result_lib = ""
-    ampsys_result_cell = ""
-    ampsys_result_view = "schematic"
-    ampsys_writeback_width_mode = "auto"
-    ampsys_writeback_finger_aliases = nil
+      ampsys_result_cell = ""
+      ampsys_result_view = "schematic"
+      ampsys_writeback_width_mode = "auto"
+      ampsys_writeback_finger_width_aliases = nil
+      ampsys_writeback_finger_aliases = nil
     unless(car(errset(load(resultFile)))
       ampsysWarn(sprintf(nil "[AmpSys] Could not load result file:\n%s" resultFile))
       return(nil)
     )
     nRecords = if(listp(ampsys_result_devices) then length(ampsys_result_devices) else 0)
-    ampsysLog(sprintf(nil "Result file loaded: records=%d lib=%s cell=%s view=%s widthMode=%s fingerAliases=%L"
-      nRecords ampsys_result_lib ampsys_result_cell ampsys_result_view ampsys_writeback_width_mode ampsys_writeback_finger_aliases))
+    ampsysLog(sprintf(nil "Result file loaded: records=%d lib=%s cell=%s view=%s widthMode=%s fingerWidthAliases=%L fingerAliases=%L"
+      nRecords ampsys_result_lib ampsys_result_cell ampsys_result_view ampsys_writeback_width_mode ampsys_writeback_finger_width_aliases ampsys_writeback_finger_aliases))
     when(nRecords <= 0
       ampsysWarn(sprintf(nil "[AmpSys] Result file has 0 sizing records:\n%s\n\nRun optimization again before applying." resultFile))
       return(nil)
