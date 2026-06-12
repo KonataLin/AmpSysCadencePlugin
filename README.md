@@ -4,12 +4,15 @@
 
 **从 Cadence Virtuoso schematic 到 AmpSys 自动尺寸优化的一体化插件**
 
+[![Website](https://img.shields.io/badge/官网-ampsys.aiclab.top-f97316)](http://ampsys.aiclab.top)
 [![Release](https://img.shields.io/github/v/release/KonataLin/AmpSysCadencePlugin?include_prereleases&label=release&color=2563eb)](https://github.com/KonataLin/AmpSysCadencePlugin/releases)
 [![Tested](https://img.shields.io/badge/tested-SMIC18MMRF%20180nm-10b981)](https://github.com/KonataLin/AmpSysCadencePlugin/releases/tag/v0.1.0-alpha.3)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-111827)](#平台支持)
 [![Issues](https://img.shields.io/github/issues/KonataLin/AmpSysCadencePlugin?label=issues&color=dc2626)](https://github.com/KonataLin/AmpSysCadencePlugin/issues)
 
 <p>
+  <a href="http://ampsys.aiclab.top"><b>官方网站</b></a>
+  &nbsp;·&nbsp;
   <a href="Usage.md"><b>使用指南</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/KonataLin/AmpSysCadencePlugin/releases"><b>下载 Release</b></a>
@@ -156,6 +159,7 @@ Env check:   tools/check_environment.py
 
 ## 反馈与支持
 
+- 官方网站：[ampsys.aiclab.top](http://ampsys.aiclab.top)
 - Bug / 兼容性问题：[GitHub Issues](https://github.com/KonataLin/AmpSysCadencePlugin/issues/new/choose)
 - Release 下载：[GitHub Releases](https://github.com/KonataLin/AmpSysCadencePlugin/releases)
 - 赞助支持：[爱发电 LocyDragon](https://www.afdian.com/a/LocyDragon)
