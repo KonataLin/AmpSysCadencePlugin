@@ -7,7 +7,6 @@
 [![Release](https://img.shields.io/github/v/release/KonataLin/AmpSysCadencePlugin?include_prereleases&label=release&color=2563eb)](https://github.com/KonataLin/AmpSysCadencePlugin/releases)
 [![Tested](https://img.shields.io/badge/tested-SMIC18MMRF%20180nm-10b981)](https://github.com/KonataLin/AmpSysCadencePlugin/releases/tag/v0.1.0-alpha.3)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-111827)](#平台支持)
-[![Core](https://img.shields.io/badge/core-protected%20binary-7c3aed)](#开源边界)
 [![Issues](https://img.shields.io/github/issues/KonataLin/AmpSysCadencePlugin?label=issues&color=dc2626)](https://github.com/KonataLin/AmpSysCadencePlugin/issues)
 
 <p>
@@ -154,25 +153,6 @@ Windows GUI: gui/windows_amd64/ampsys_gui/ampsys_gui.exe
 Linux GUI:   gui/linux_x86_64/ampsys_gui/ampsys_gui
 Env check:   tools/check_environment.py
 ```
-
-## 开源边界
-
-本仓库公开：
-
-- GUI 与 runner wrapper
-- Cadence SKILL 集成
-- 安装脚本与使用文档
-- Issue/Release/诊断模板
-
-不公开：
-
-- `AmpSys/`
-- `yami/`
-- `TheScanner/`
-- `acsolver/`
-- 其它内部算法源码
-
-这些核心能力通过 Release 包中的 protected binary 提供。
 
 ## 反馈与支持
 
