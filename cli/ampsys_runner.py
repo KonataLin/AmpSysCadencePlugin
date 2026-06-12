@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Headless AmpSys runner used by the GUI and Cadence SKILL plugin."""
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import time
 import traceback
 import platform
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -144,8 +145,12 @@ def prepare_project_for_core(argv: List[str]) -> List[str]:
     project = json.loads(project_path.read_text(encoding="utf-8-sig"))
     lib = project.get("library", {})
     changed = False
-    if lib.get("hspice_dir"):
+    backend = normalize_simulator_backend(lib)
+    if backend == "hspice" and lib.get("hspice_dir"):
         lib["hspice_cmd"] = resolve_hspice_cmd(lib)
+        changed = True
+    if backend == "spectre" and lib.get("spectre_dir"):
+        lib["spectre_cmd"] = resolve_spectre_cmd(lib)
         changed = True
     marker = prepare_existing_library_cache(lib, project_path)
     if marker:
@@ -365,8 +370,11 @@ def project_debug_summary(project: Dict[str, Any], project_path: Path, cmd: str)
             "model_lib": lib.get("model_lib", ""),
             "temperature": lib.get("temperature", ""),
             "process_vdd": lib.get("process_vdd", ""),
+            "simulator_backend": lib.get("simulator_backend", ""),
             "hspice_dir": lib.get("hspice_dir", ""),
             "hspice_cmd": lib.get("hspice_cmd", ""),
+            "spectre_dir": lib.get("spectre_dir", ""),
+            "spectre_cmd": lib.get("spectre_cmd", ""),
             "L_min": lib.get("L_min", ""),
             "L_list": lib.get("L_list", ""),
             "scan_width": lib.get("scan_width", ""),
@@ -696,6 +704,117 @@ def resolve_hspice_cmd(lib: Dict[str, Any]) -> str:
     raise FileNotFoundError(f"HSPICE executable was not found under {path}. Tried: {tried}")
 
 
+def _path_text(value: Any) -> str:
+    return str(value or "").strip().strip('"').strip("'")
+
+
+def _looks_like_spectre_model(path: Any) -> bool:
+    text = _path_text(path).replace("\\", "/").lower()
+    return text.endswith(".scs") or "/spectre/" in text or text.endswith("_spe.lib") or "_spe." in text
+
+
+def _looks_like_hspice_model(path: Any) -> bool:
+    text = _path_text(path).replace("\\", "/").lower()
+    return "/hspice/" in text or (text.endswith(".lib") and not _looks_like_spectre_model(text))
+
+
+def normalize_simulator_backend(lib: Dict[str, Any]) -> str:
+    raw = str(lib.get("simulator_backend") or lib.get("simulator") or "auto").strip().lower()
+    aliases = {
+        "": "auto",
+        "auto": "auto",
+        "hspice": "hspice",
+        "hspice-only": "hspice",
+        "spectre": "spectre",
+        "cadence spectre": "spectre",
+    }
+    mode = aliases.get(raw, raw)
+    if mode not in {"auto", "hspice", "spectre"}:
+        raise ValueError(f"Unknown simulator backend: {raw}")
+    if mode != "auto":
+        return mode
+    model = str(lib.get("model_path") or "").replace("\\", "/").lower()
+    if _looks_like_spectre_model(model):
+        return "spectre"
+    if _looks_like_hspice_model(model):
+        return "hspice"
+    if str(lib.get("hspice_dir") or "").strip():
+        return "hspice"
+    if str(lib.get("spectre_dir") or "").strip() or os.environ.get("SPECTRE_CMD") or os.environ.get("SPECTRE"):
+        return "spectre"
+    if sys.platform.startswith("linux"):
+        return "spectre"
+    return "hspice"
+
+
+def _spectre_candidate_paths(root: Path) -> List[Path]:
+    names = ("spectre.exe", "spectre.bat", "spectre.cmd") if sys.platform.startswith("win") else ("spectre",)
+    subdirs = (
+        "",
+        "bin",
+        "BIN",
+        "tools/bin",
+        "tools.lnx86/bin",
+        "tools.lnx86/spectre/bin",
+        "tools.lnx86/spectre/bin/64bit",
+        "spectre/bin",
+        "spectre/bin/64bit",
+    )
+    out: List[Path] = []
+    for sub in subdirs:
+        base = root / sub if sub else root
+        for name in names:
+            out.append(base / name)
+    for pattern in ("*/bin/spectre", "*/tools.lnx86/bin/spectre", "*/tools.lnx86/spectre/bin/64bit/spectre"):
+        out.extend(root.glob(pattern))
+    return out
+
+
+def resolve_spectre_cmd(lib: Dict[str, Any]) -> str:
+    explicit_dir = str(lib.get("spectre_dir") or "").strip().strip('"').strip("'")
+    explicit_cmd = str(lib.get("spectre_cmd") or "").strip()
+
+    if explicit_dir:
+        path = Path(explicit_dir).expanduser()
+        if path.is_file():
+            return str(path)
+        if not path.exists():
+            if "/" not in explicit_dir and "\\" not in explicit_dir:
+                return explicit_dir
+            raise FileNotFoundError(f"Spectre dir was not found: {path}")
+        for candidate in _spectre_candidate_paths(path):
+            if candidate.is_file():
+                return str(candidate)
+        tried = ", ".join(str(c) for c in _spectre_candidate_paths(path)[:10])
+        raise FileNotFoundError(f"Spectre executable was not found under {path}. Tried: {tried}")
+
+    for env_name in ("SPECTRE_CMD", "SPECTRE"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value
+
+    if explicit_cmd:
+        cmd_path = Path(explicit_cmd.strip('"').strip("'")).expanduser()
+        if cmd_path.is_file():
+            return str(cmd_path)
+        if "/" not in explicit_cmd and "\\" not in explicit_cmd:
+            found = shutil.which(explicit_cmd)
+            if found:
+                return found
+            if explicit_cmd.lower() != "spectre":
+                return explicit_cmd
+        else:
+            return explicit_cmd
+
+    found = shutil.which("spectre")
+    if found:
+        return found
+
+    raise FileNotFoundError(
+        "Spectre executable was not found. Put spectre on PATH, set SPECTRE_CMD, "
+        "or fill Spectre dir with the directory that contains the spectre executable."
+    )
+
 def create_flow(project: Dict[str, Any]):
     engine_root = add_engine_path(project.get("engine_root", ""))
     from AmpSys import AmpFlow, AmpFlowConfig
@@ -705,9 +824,10 @@ def create_flow(project: Dict[str, Any]):
     run_cfg = project.get("config", {})
     cache_dir = lib.get("cache_dir") or str(Path(project.get("project_dir", ".")).resolve() / "libraries")
     temp_dir = lib.get("temp_dir") or str(Path(project.get("project_dir", ".")).resolve() / "workspace" / "tmp")
+    simulator_backend = normalize_simulator_backend(lib)
 
     from_pdk_kwargs = {
-        "model_path": lib["model_path"],
+        "model_path": lib.get("model_path", ""),
         "cellname_nmos": lib["nmos_name"],
         "cellname_pmos": lib["pmos_name"],
         "model_lib": lib.get("model_lib", "tt"),
@@ -722,7 +842,9 @@ def create_flow(project: Dict[str, Any]):
         "batch_size": get_int(lib, "batch_size", 20),
         "batch_timeout_ms": get_int(lib, "batch_timeout_ms", 50),
         "process_vdd": get_float(lib, "process_vdd", 1.8),
-        "hspice_cmd": resolve_hspice_cmd(lib),
+        "simulator_backend": simulator_backend,
+        "spectre_cmd": resolve_spectre_cmd(lib) if simulator_backend == "spectre" else str(lib.get("spectre_cmd") or "spectre"),
+        "hspice_cmd": resolve_hspice_cmd(lib) if simulator_backend == "hspice" else str(lib.get("hspice_cmd") or "hspice -mt 2"),
         "cache_dir": cache_dir,
         "temp_dir": temp_dir,
         "force_rescan": bool(lib.get("force_rescan", False)),
@@ -1144,6 +1266,14 @@ def run_build_library(project_path: Path) -> None:
     print_project_summary(project, project_path, "build-library")
     telemetry = Path(project.get("telemetry_path") or project_path.with_name("telemetry.jsonl"))
     lib = project.get("library", {})
+    model_text = str(lib.get("model_path") or "").strip()
+    if not model_text:
+        raise FileNotFoundError(
+            "Model path is required for build-library. Select the exact HSPICE/Spectre .lib/.scs file from your PDK."
+        )
+    model_path = Path(model_text).expanduser()
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Model path was not found: {model_path}")
     l_list = parse_float_list(lib.get("L_list"))
     n_l = len(l_list) if l_list else 20
     vgs = parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02))
@@ -1159,6 +1289,7 @@ def run_build_library(project_path: Path) -> None:
         "progress": 0.02,
         "total_points": total_points,
         "grid": {"L": n_l, "VGS": n_vgs, "VDS": n_vds, "VSB": n_vsb},
+        "simulator": normalize_simulator_backend(lib),
         "time": time.time(),
     })
     flow, engine_root = create_flow(project)
@@ -1410,5 +1541,3 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-
-

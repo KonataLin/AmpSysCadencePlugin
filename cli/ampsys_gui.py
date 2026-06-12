@@ -27,7 +27,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
 
 from ampsys_netlist import parse_netlist
-from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, resolve_engine_root, resolve_hspice_cmd
+from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, normalize_simulator_backend, resolve_engine_root, resolve_hspice_cmd, resolve_spectre_cmd
 
 
 def detect_plugin_root() -> Path:
@@ -336,8 +336,11 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "model_lib": "tt",
             "temperature": 25.0,
             "process_vdd": 1.8,
+            "simulator_backend": "auto",
             "hspice_dir": "",
             "hspice_cmd": "hspice -mt 2",
+            "spectre_dir": "",
+            "spectre_cmd": "spectre",
             "cache_dir": str(default_lut_cache_dir(project_dir)),
             "temp_dir": str(default_runtime_temp_dir(project_dir)),
             "force_rescan": False,
@@ -512,9 +515,9 @@ def sanitize_loaded_project(project: Dict[str, Any], project_path: Path) -> bool
             changed = True
 
     if os.name != "nt":
-        for key in ("model_path", "hspice_dir", "hspice_cmd"):
+        for key in ("model_path", "hspice_dir", "hspice_cmd", "spectre_dir", "spectre_cmd"):
             if is_windows_path(lib.get(key)):
-                lib[key] = "" if key != "hspice_cmd" else "hspice -mt 2"
+                lib[key] = "hspice -mt 2" if key == "hspice_cmd" else ("spectre" if key == "spectre_cmd" else "")
                 changed = True
         triplet = infer_cache_triplet(cache_path)
         if triplet:
@@ -799,7 +802,7 @@ class AmpSysGUI:
         title_box = tk.Frame(header, bg=PANEL)
         title_box.grid(row=0, column=1, rowspan=2, sticky="ew", padx=(18, 14), pady=14)
         tk.Label(title_box, text="AmpSys", bg=PANEL, fg=INK, font=self.font_heading).grid(row=0, column=0, sticky="w")
-        mode_text = "Windows LUT Builder" if self.can_build_library_here() else "Linux Cache-Only"
+        mode_text = "LUT Builder: HSPICE / Spectre"
         tk.Label(title_box, text=mode_text, bg="#eaf2ff", fg=ACCENT, font=self.font_bold, padx=10, pady=4).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(4, 0))
         tk.Label(title_box, text="Cadence schematic optimizer", bg=PANEL, fg=MUTED, font=self.font_bold).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
@@ -1048,12 +1051,16 @@ class AmpSysGUI:
         self.set_entry_state("library.model_lib", "ok" if str(lib.get("model_lib", "")).strip() else "bad")
         self.set_entry_state("library.temperature", "ok" if str(self.lib_vars.get("temperature", "")).strip() else "bad")
         self.set_entry_state("library.process_vdd", "ok" if self.text_is_positive(self.lib_vars.get("process_vdd", "")) else "bad")
+        sim_text = str(self.lib_vars.get("simulator_backend", "auto")).strip().lower()
+        self.set_entry_state("library.simulator_backend", "ok" if sim_text in {"auto", "hspice", "spectre"} else "bad")
         if self.can_build_library_here():
             model_text = str(lib.get("model_path", "")).strip()
             model_ok = bool(model_text) and Path(model_text).expanduser().is_file()
             self.set_entry_state("library.model_path", "ok" if model_ok else ("bad" if model_text else "neutral"))
             hspice_text = str(self.lib_vars.get("hspice_dir", "")).strip()
             self.set_entry_state("library.hspice_dir", "ok" if hspice_text else "neutral")
+            spectre_text = str(self.lib_vars.get("spectre_dir", "")).strip()
+            self.set_entry_state("library.spectre_dir", "ok" if spectre_text else "neutral")
 
         for key in ("gain_min", "gbw", "pm_min", "load_cap"):
             text = str(self.spec_vars.get(key, "")).strip()
@@ -1074,7 +1081,7 @@ class AmpSysGUI:
         self.set_entry_state("settings.geometry_decimals", "ok" if 0 <= geometry_decimals <= 9 else "bad")
 
     def can_build_library_here(self) -> bool:
-        return os.name == "nt"
+        return True
 
     def cache_config_ready(self, lib: Dict[str, Any]) -> bool:
         return bool(lib.get("nmos_name")) and bool(lib.get("pmos_name"))
@@ -1266,10 +1273,11 @@ class AmpSysGUI:
         self.field(lut, "Corner/lib", self.lib_vars.vars["model_lib"], 2, 0, field_key="library.model_lib")
         self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2, field_key="library.temperature")
         self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0, field_key="library.process_vdd")
-        if self.can_build_library_here():
-            self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
-            self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
-            ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=6, column=0, columnspan=2, padx=12, pady=8, sticky="ew")
+        self.field(lut, "Simulator", self.lib_vars.vars["simulator_backend"], 3, 2, field_key="library.simulator_backend")
+        self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
+        self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
+        self.field(lut, "Spectre dir", self.lib_vars.vars["spectre_dir"], 5, 2, width=42, browse="dir", field_key="library.spectre_dir")
+        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=6, column=0, columnspan=2, padx=12, pady=8, sticky="ew")
         row += 1
 
         devices = self.flow_section(page, "devices", "Device Currents", row)
@@ -1701,7 +1709,7 @@ class AmpSysGUI:
         floats = {"temperature", "process_vdd", "L_min", "scan_width", "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop", "vds_step", "vsb_start", "vsb_stop", "vsb_step"}
         ints = {"batch_size", "batch_timeout_ms"}
         defaults = default_project(self.project_path)["library"]
-        string_defaults = {"model_lib", "hspice_cmd", "cache_dir", "temp_dir"}
+        string_defaults = {"model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd", "cache_dir", "temp_dir"}
         out: Dict[str, Any] = {}
         for k, v in raw.items():
             text = str(v).strip() if v is not None else ""
@@ -1871,12 +1879,8 @@ class AmpSysGUI:
         project = self.collect_project()
         lib = project["library"]
         if cmd == "build-library":
-            if not self.can_build_library_here():
-                messagebox.showwarning("AmpSys", "Build Library is only enabled on Windows in this release. On Linux, copy an existing LUT cache and select Cache dir.")
-                self.update_flow_statuses()
-                return False
             if not lib.get("model_path"):
-                messagebox.showwarning("AmpSys", "Model path is required before building the LUT cache.")
+                messagebox.showwarning("AmpSys", "Model path is required before building the LUT cache. Select the exact HSPICE/Spectre .lib/.scs file from your PDK.")
                 self.update_flow_statuses()
                 return False
             model_path = Path(str(lib.get("model_path", ""))).expanduser()
@@ -1885,7 +1889,11 @@ class AmpSysGUI:
                 self.update_flow_statuses()
                 return False
             try:
-                resolve_hspice_cmd(lib)
+                backend = normalize_simulator_backend(lib)
+                if backend == "spectre":
+                    resolve_spectre_cmd(lib)
+                else:
+                    resolve_hspice_cmd(lib)
             except Exception as exc:
                 messagebox.showwarning("AmpSys", str(exc))
                 self.update_flow_statuses()
@@ -1915,7 +1923,7 @@ class AmpSysGUI:
                     messagebox.showwarning(
                         "AmpSys",
                         "LUT cache is not ready.\n\n"
-                        "On Linux/Virtuoso, select the cache directory copied from the Windows HSPICE build.\n\n"
+                        "Select an existing cache directory, or build it here with HSPICE/Spectre if the model file and simulator are available.\n\n"
                         f"Expected one of:\n{markers}",
                     )
                     should_build = False
@@ -2107,7 +2115,8 @@ class AmpSysGUI:
             self.draw_charts()
         elif status == "start":
             if phase == "build_library" and event.get("total_points"):
-                self.status_var.set(f"Building LUT: {event.get('total_points'):,} HSPICE points")
+                simulator = str(event.get("simulator") or "simulator").upper()
+                self.status_var.set(f"Building LUT: {event.get('total_points'):,} {simulator} points")
                 self.progress_var.set(2)
             elif phase == "optimize":
                 self.status_var.set("Optimization started")
@@ -2434,6 +2443,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
 

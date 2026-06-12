@@ -35,11 +35,11 @@
 >
 > 本插件始终以公益免费方式提供。因使用、本地修改、二次分发或误用本插件造成的设计错误、项目延期、流片失败、经济损失或其它后果，作者概不负责。
 
-AmpSys Cadence Plugin 把 **Virtuoso schematic 抽取**、**Python GUI 配置**、**AmpSys protected core 优化**、**SKILL 尺寸写回** 串成一个可重复的闭环。典型工作流是：Windows 侧用 HSPICE 建 LUT，Linux/Virtuoso 侧使用 cache-only 快速优化并写回器件尺寸。
+AmpSys Cadence Plugin 把 **Virtuoso schematic 抽取**、**Python GUI 配置**、**AmpSys protected core 优化**、**SKILL 尺寸写回** 串成一个可重复的闭环。典型工作流是：用 Windows/HSPICE 或 Linux/WSL Spectre 建 LUT，Linux/Virtuoso 侧使用 fast LUT 优化并写回器件尺寸。
 
 ```mermaid
 flowchart LR
-  A["Windows<br/>HSPICE 建 LUT"] --> B["LUT cache<br/>nmos/pmos pkl"]
+  A["Windows HSPICE<br/>或 Linux/WSL Spectre 建 LUT"] --> B["LUT cache<br/>nmos/pmos pkl"]
   B --> C["Linux / Virtuoso<br/>打开 schematic"]
   C --> D["AmpSys 菜单<br/>Extract Current Schematic"]
   D --> E["GUI<br/>电流、spec、权重"]
@@ -55,14 +55,14 @@ flowchart LR
 | 已实测 PDK | SMIC18MMRF / SMIC 180nm RF |
 | 已实测链路 | Linux Virtuoso 抽取、GUI 优化、CDF 写回 |
 | Windows 用途 | GUI、HSPICE LUT 建表、环境检查 |
-| Linux 用途 | Virtuoso 集成、cache-only 优化、SKILL 写回 |
+| Linux 用途 | Virtuoso 集成、fast LUT 优化、Spectre 建 LUT、SKILL 写回 |
 
 ## 亮点
 
 | 能力 | 说明 |
 | --- | --- |
 | 从 schematic 进入优化 | 在 Virtuoso 菜单中抽取当前打开的 schematic，无需手写 netlist |
-| Windows 建表，Linux 使用 | 适合 Windows 有 HSPICE、Linux 有 Cadence/Virtuoso 的常见环境 |
+| HSPICE/Spectre 建表 | 支持 Windows HSPICE 建 LUT，也支持 Linux/WSL Cadence Spectre 建 LUT |
 | 可视化 GUI | LUT、器件电流、spec、权重、收敛过程和结果在一个流程页里完成 |
 | CDF 写回 | 支持 `W / L / fingers / m` 等常见 CDF 参数别名，SMIC18MMRF 已验证 `Total Width + Finger Width` 写回 |
 | 详细日志 | GUI、SKILL、runner、optimization、telemetry 都会落盘，方便定位环境问题 |
@@ -73,7 +73,7 @@ flowchart LR
 | 平台 | 状态 | 用途 |
 | --- | --- | --- |
 | Windows x86_64 | 支持 | standalone GUI、HSPICE LUT 建表、环境检查 |
-| Linux x86_64, glibc >= 2.17 | 支持 | Virtuoso 菜单、standalone GUI、cache-only 优化、SKILL 写回 |
+| Linux x86_64, glibc >= 2.17 | 支持 | Virtuoso 菜单、standalone GUI、Spectre LUT 建表、fast LUT 优化、SKILL 写回 |
 | macOS / ARM / Alpine musl / 32-bit | 暂不支持 | 当前没有对应 protected core |
 
 ## 获取方式
@@ -126,8 +126,8 @@ py -3 <plugin-root>/tools/check_environment.py
 
 ## 推荐工作流
 
-1. 在 Windows GUI 中填写 HSPICE model、NMOS/PMOS 名称、工艺角、温度和 cache 目录。
-2. 点击 `Build Library` 生成 LUT cache。
+1. 在 GUI 中手动选择 PDK 的 HSPICE/Spectre `.lib/.scs` model 文件，并填写 NMOS/PMOS 名称、工艺角、温度和 cache 目录。
+2. 用 Windows/HSPICE 或 Linux/WSL Spectre 点击 `Build Library` 生成 LUT cache。
 3. 将完整 cache 目录复制到 Linux。
 4. 在 Linux/Virtuoso 中打开待优化 schematic。
 5. 点击 `AmpSys -> Extract Current Schematic...`。

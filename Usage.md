@@ -9,7 +9,7 @@
 
 ```mermaid
 flowchart LR
-  A["Windows<br/>HSPICE 建 LUT"] --> B["复制完整 LUT cache"]
+  A["Windows HSPICE<br/>或 Linux/WSL Spectre 建 LUT"] --> B["复制完整 LUT cache"]
   B --> C["Linux / Virtuoso<br/>打开待优化 schematic"]
   C --> D["AmpSys 菜单<br/>Extract Current Schematic"]
   D --> E["GUI<br/>检查 cache、器件、电流、spec"]
@@ -26,7 +26,7 @@ Release 包自带 Windows/Linux standalone GUI 和 protected core。普通用户
 | 环境 | 用途 | 状态 |
 | --- | --- | --- |
 | Windows x86_64 | GUI、HSPICE 建 LUT cache、环境检查 | 支持 |
-| Linux x86_64, glibc >= 2.17 | Virtuoso 集成、cache-only 优化、SKILL 写回 | 支持 |
+| Linux x86_64, glibc >= 2.17 | Virtuoso 集成、cache-only 优化、Spectre 建 LUT、SKILL 写回 | 支持 |
 | macOS / ARM / Alpine musl / 32-bit | 当前 release 没有对应 core | 不支持 |
 
 正常情况下整包复制即可，不要拆目录。安装时通常让：
@@ -121,24 +121,40 @@ py -3 <plugin-root>\tools\check_environment.py
 py -3 <plugin-root>\cli\ampsys_gui.py
 ```
 
-Windows 侧主要用来建 LUT cache。真正从 Virtuoso schematic 抽取并优化，推荐在 Linux/Cadence 环境里做。
+Windows 侧通常用 HSPICE 建 LUT cache。真正从 Virtuoso schematic 抽取并优化，推荐在 Linux/Cadence 环境里做。若 Linux/WSL 已经配置好 Cadence Spectre，也可以直接在 Linux/WSL 侧用 Spectre 建 LUT。
 
-## 4. Windows 建 LUT Cache
+## 4. 建 LUT Cache
 
-打开 GUI 后，Windows 会显示 `Windows LUT Builder` 模式。
+打开 GUI 后，在 `LUT Cache` 区域填写建表参数。Windows 常用 HSPICE；Linux/WSL 常用 Spectre。已有 LUT 时不需要重建，直接选择 `Cache dir` 即可。
 
 需要填写：
 
 | 字段 | 含义 |
 | --- | --- |
 | Cache dir | LUT 保存目录 |
-| Model path | HSPICE model 文件路径 |
-| HSPICE dir | HSPICE 可执行文件所在目录 |
+| Simulator | `auto`、`hspice` 或 `spectre`。一般保持 `auto` |
+| Model path | 用户手动指定的 HSPICE/Spectre `.lib/.scs` model 文件路径 |
+| HSPICE dir | HSPICE 可执行文件所在目录，使用 Spectre 时可留空 |
+| Spectre dir | Spectre 可执行文件所在目录，`spectre` 已在 PATH 时可留空 |
 | NMOS name | NMOS model/cell 名称，可用逗号分隔多个别名 |
 | PMOS name | PMOS model/cell 名称，可用逗号分隔多个别名 |
 | Corner/lib | 工艺角或 `.lib` section，例如 `tt` |
 | Temp C | 建表温度 |
 | VDD V | 工艺电源电压 |
+
+`Model path` 必须由用户手动选择，插件不会自动扫描或猜测 PDK/model 文件，避免在一台机器同时存在多个 PDK 时选错工艺。Linux/WSL 的 Spectre model 通常类似：
+
+```text
+/home/<user>/Desktop/<pdk>/models/spectre/<model>_spe.lib
+```
+
+如果 PDK 在 WSL 里、GUI 也在 WSL/Linux 里运行，直接选择 Linux 路径。若必须从 Windows GUI 访问 WSL 文件，可以尝试 Windows 的 WSL UNC 路径：
+
+```text
+\\wsl$\<distro>\home\<user>\Desktop\<pdk>\models\spectre\<model>_spe.lib
+```
+
+建 Spectre LUT 前，请先在同一个 shell 里完成 Cadence/license 环境配置，例如 `source ~/.bashrc`。runner 会按用户填写的 `Spectre dir`、`SPECTRE_CMD/SPECTRE` 或当前 `PATH` 查找 `spectre`；如果仍找不到，会要求用户手动填写 `Spectre dir`。runner 会自动设置 `CDS_AUTO_64BIT=ALL` 以避免旧环境误选 32-bit 可执行文件。
 
 点 `Build Library` 开始建表。建好以后，cache 目录里通常应包含：
 
@@ -151,7 +167,7 @@ pmos_*_data/
 
 如果你已经有可用 LUT，不需要重新建表，直接在 GUI 里选择已有 `Cache dir`。只要 `LUT Cache` 变成 OK，就可以继续。
 
-## 5. 把 Cache 从 Windows 带到 Linux
+## 5. 把 Cache 带到 Linux
 
 复制整个 cache 目录，不要只复制 `.pkl` 文件。推荐在 Linux 上放到类似：
 
@@ -161,7 +177,7 @@ pmos_*_data/
 
 注意：Linux GUI 里要选择 Linux 本机路径，不能继续使用 `D:\...` 或 `H:\...` 这种 Windows 路径。
 
-Linux/Virtuoso 侧只消耗 LUT cache，不需要 HSPICE，也不需要 model path。优化路径默认走 fast LUT，不做 cosim。
+Linux/Virtuoso 侧优化时只消耗 LUT cache，不需要 HSPICE，也不需要 model path。只有在 Linux/WSL 侧重新建 LUT 时，才需要 Spectre model 和 Spectre 可执行文件。优化路径默认走 fast LUT，不做 cosim。
 
 ## 6. Linux / Virtuoso 安装
 
