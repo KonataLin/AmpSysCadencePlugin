@@ -27,7 +27,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
 
 from ampsys_netlist import parse_netlist
-from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, expected_library_markers, find_core_executable, has_compiled_engine, has_source_engine, library_ready_marker, normalize_simulator_backend, resolve_engine_root, resolve_hspice_cmd, resolve_spectre_cmd
+from ampsys_runner import DEFAULT_WRITEBACK_SETTINGS, auto_spectre_threads, expected_library_markers, find_core_executable, find_spectre_candidates, has_compiled_engine, has_source_engine, library_ready_marker, normalize_simulator_backend, resolve_engine_root, resolve_hspice_cmd, resolve_spectre_cmd, spectre_accel_label, validate_spectre_accel
 
 
 def detect_plugin_root() -> Path:
@@ -63,6 +63,7 @@ BAD_BG = "#fff1f2"
 NEUTRAL_BG = "#ffffff"
 FLOW_OK = "OK"
 FLOW_PENDING = "NO"
+SPECTRE_ACCEL_CHOICES = ("auto", "off", "+aps", "++aps")
 STDOUT_LINES_PER_TICK = 120
 LOG_TEXT_MAX_LINES = 2500
 TELEMETRY_READ_BYTES = 256 * 1024
@@ -201,6 +202,8 @@ def gui_relaunch_command(args: List[str]) -> List[str]:
 
 
 def runner_command(cmd: str, project_path: Path) -> List[str]:
+    if cmd == "spectre-benchmark":
+        return py_command() + [str(RUNNER), cmd, "--project", str(project_path)]
     core = find_core_executable(ROOT)
     if core:
         return [str(core), cmd, "--project", str(project_path)]
@@ -341,6 +344,8 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "hspice_cmd": "hspice -mt 2",
             "spectre_dir": "",
             "spectre_cmd": "spectre",
+            "spectre_threads": "auto",
+            "spectre_accel": "auto",
             "cache_dir": str(default_lut_cache_dir(project_dir)),
             "temp_dir": str(default_runtime_temp_dir(project_dir)),
             "force_rescan": False,
@@ -623,6 +628,7 @@ class AmpSysGUI:
         self.telemetry_remainder = ""
         self.telemetry_pending: List[str] = []
         self.telemetry_events: List[Dict[str, Any]] = []
+        self.build_device_progress: Dict[str, float] = {}
         self.result_data: Dict[str, Any] = {}
         self.last_points: List[Dict[str, Any]] = []
         self.flow_status_vars: Dict[str, tk.StringVar] = {}
@@ -634,6 +640,7 @@ class AmpSysGUI:
         self.scroll_canvases: List[tk.Canvas] = []
         self.status_update_after: Optional[str] = None
         self.status_var = tk.StringVar(root, "Ready")
+        self.spectre_hint_var = tk.StringVar(root, "Spectre AutoSearch only finds the executable; select the PDK model file manually.")
         self.progress_var = tk.DoubleVar(root, 0.0)
         self.bulk_current_var = tk.StringVar(root, "")
         self.field_entries: Dict[str, ttk.Entry] = {}
@@ -789,6 +796,7 @@ class AmpSysGUI:
     def run_scheduled_status_update(self) -> None:
         self.status_update_after = None
         self.update_flow_statuses()
+        self.update_spectre_hint()
         if self.cadence_netlist_mode and self.should_auto_reparse_netlist():
             self.root.after(10, self.parse_netlist_from_gui)
 
@@ -1061,6 +1069,13 @@ class AmpSysGUI:
             self.set_entry_state("library.hspice_dir", "ok" if hspice_text else "neutral")
             spectre_text = str(self.lib_vars.get("spectre_dir", "")).strip()
             self.set_entry_state("library.spectre_dir", "ok" if spectre_text else "neutral")
+            spectre_cmd_text = str(self.lib_vars.get("spectre_cmd", "")).strip()
+            self.set_entry_state("library.spectre_cmd", "ok" if spectre_cmd_text else "neutral")
+            spectre_threads_text = str(self.lib_vars.get("spectre_threads", "")).strip()
+            self.set_entry_state("library.spectre_threads", "ok" if spectre_threads_text else "neutral")
+            accel_text = str(self.lib_vars.get("spectre_accel", "auto")).strip()
+            if accel_text not in SPECTRE_ACCEL_CHOICES:
+                self.lib_vars.set("spectre_accel", "auto")
 
         for key in ("gain_min", "gbw", "pm_min", "load_cap"):
             text = str(self.spec_vars.get(key, "")).strip()
@@ -1273,11 +1288,17 @@ class AmpSysGUI:
         self.field(lut, "Corner/lib", self.lib_vars.vars["model_lib"], 2, 0, field_key="library.model_lib")
         self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2, field_key="library.temperature")
         self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0, field_key="library.process_vdd")
-        self.field(lut, "Simulator", self.lib_vars.vars["simulator_backend"], 3, 2, field_key="library.simulator_backend")
+        self.combo(lut, "Simulator", self.lib_vars.vars["simulator_backend"], 3, 2, ("auto", "hspice", "spectre"))
         self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
         self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
         self.field(lut, "Spectre dir", self.lib_vars.vars["spectre_dir"], 5, 2, width=42, browse="dir", field_key="library.spectre_dir")
-        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=6, column=0, columnspan=2, padx=12, pady=8, sticky="ew")
+        self.field(lut, "Spectre cmd", self.lib_vars.vars["spectre_cmd"], 6, 0, width=42, field_key="library.spectre_cmd")
+        self.field(lut, "Spectre threads", self.lib_vars.vars["spectre_threads"], 6, 2, field_key="library.spectre_threads")
+        self.combo(lut, "Spectre accel", self.lib_vars.vars["spectre_accel"], 7, 0, SPECTRE_ACCEL_CHOICES)
+        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=8, column=0, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="Benchmark Spectre", command=lambda: self.start_runner("spectre-benchmark")).grid(row=8, column=1, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="AutoSearch Spectre", command=self.auto_search_spectre).grid(row=8, column=2, columnspan=2, padx=12, pady=8, sticky="ew")
+        ttk.Label(lut, textvariable=self.spectre_hint_var, style="MutedCard.TLabel").grid(row=9, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="w")
         row += 1
 
         devices = self.flow_section(page, "devices", "Device Currents", row)
@@ -1453,6 +1474,7 @@ class AmpSysGUI:
         ttk.Button(footer_buttons, text="Sponsor", style="Link.TButton", command=lambda: self.open_url(SPONSOR_URL)).pack(side="left", padx=6)
         self.draw_empty_charts()
         self.update_flow_statuses()
+        self.update_spectre_hint()
 
     def display_field(self, parent: tk.Widget, label: str, key: str, row: int, col: int, scale: float = 1.0) -> None:
         if scale != 1.0:
@@ -1472,6 +1494,32 @@ class AmpSysGUI:
                 self.settings_body.grid_remove()
                 self.settings_toggle_text.set("Show Settings")
         self.refresh_terminal_table()
+
+    def update_spectre_hint(self) -> None:
+        if not hasattr(self, "spectre_hint_var"):
+            return
+        try:
+            lib = self.coerce_library()
+            backend = normalize_simulator_backend(lib)
+            if backend != "spectre":
+                self.spectre_hint_var.set("Spectre stays idle unless Simulator=auto selects a Spectre model or Simulator=spectre.")
+                return
+            validate_spectre_accel(lib)
+            threads = auto_spectre_threads(lib)
+            try:
+                cmd = resolve_spectre_cmd(lib)
+            except Exception as exc:
+                self.spectre_hint_var.set(f"Spectre executable not resolved: {exc}")
+                return
+            cache_dir = str(lib.get("cache_dir") or "").strip() or "(default cache)"
+            temp_dir = str(lib.get("temp_dir") or "").strip() or "(auto temp)"
+            accel = spectre_accel_label(lib)
+            self.spectre_hint_var.set(
+                f"Spectre: {cmd}  | mt/process={threads}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir} (raw scratch may auto-move to Linux local /tmp; Benchmark uses a tiny temporary grid)"
+            )
+        except Exception as exc:
+            self.spectre_hint_var.set(f"Spectre setup needs attention: {exc}")
+            logging.debug("Could not update Spectre hint: %s", exc)
 
     def refresh_terminal_table(self) -> None:
         if not hasattr(self, "term_tree"):
@@ -1709,7 +1757,7 @@ class AmpSysGUI:
         floats = {"temperature", "process_vdd", "L_min", "scan_width", "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop", "vds_step", "vsb_start", "vsb_stop", "vsb_step"}
         ints = {"batch_size", "batch_timeout_ms"}
         defaults = default_project(self.project_path)["library"]
-        string_defaults = {"model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd", "cache_dir", "temp_dir"}
+        string_defaults = {"model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd", "spectre_threads", "spectre_accel", "cache_dir", "temp_dir"}
         out: Dict[str, Any] = {}
         for k, v in raw.items():
             text = str(v).strip() if v is not None else ""
@@ -1875,10 +1923,50 @@ class AmpSysGUI:
         self.status_var.set("Setup is ready.")
         messagebox.showinfo("AmpSys setup check", "Setup is ready to run.")
 
+    def auto_search_spectre(self) -> None:
+        lib = self.coerce_library()
+        try:
+            candidates = find_spectre_candidates(lib)
+        except Exception as exc:
+            logging.exception("Spectre AutoSearch failed")
+            messagebox.showwarning("AmpSys", f"Spectre AutoSearch failed:\n{exc}")
+            return
+        if not candidates:
+            self.set_entry_state("library.spectre_dir", "bad")
+            self.status_var.set("Spectre was not found. Fill Spectre dir manually.")
+            messagebox.showwarning(
+                "AmpSys",
+                "Spectre executable was not found.\n\n"
+                "Fill Spectre dir with the directory containing the spectre executable, "
+                "or put spectre on PATH before launching the GUI.",
+            )
+            return
+        selected = Path(candidates[0])
+        self.lib_vars.set("spectre_dir", str(selected.parent))
+        if not str(self.lib_vars.get("spectre_cmd", "")).strip():
+            self.lib_vars.set("spectre_cmd", "spectre")
+        if not str(self.lib_vars.get("spectre_threads", "")).strip():
+            self.lib_vars.set("spectre_threads", "auto")
+        if not str(self.lib_vars.get("spectre_accel", "")).strip():
+            self.lib_vars.set("spectre_accel", "auto")
+        self.save_project_silent()
+        self.update_field_styles()
+        self.status_var.set(f"Spectre found: {selected}  auto mt={auto_spectre_threads(self.coerce_library())}")
+        logging.info("Spectre AutoSearch selected %s from candidates=%s", selected, candidates)
+        if len(candidates) > 1:
+            messagebox.showinfo(
+                "AmpSys",
+                "Spectre executable found:\n"
+                f"{selected}\n\n"
+                "Other candidates were also found; keep this one or choose Spectre dir manually.",
+            )
+        else:
+            messagebox.showinfo("AmpSys", f"Spectre executable found:\n{selected}")
+
     def validate_before_run(self, cmd: str) -> bool:
         project = self.collect_project()
         lib = project["library"]
-        if cmd == "build-library":
+        if cmd in {"build-library", "spectre-benchmark"}:
             if not lib.get("model_path"):
                 messagebox.showwarning("AmpSys", "Model path is required before building the LUT cache. Select the exact HSPICE/Spectre .lib/.scs file from your PDK.")
                 self.update_flow_statuses()
@@ -1889,9 +1977,11 @@ class AmpSysGUI:
                 self.update_flow_statuses()
                 return False
             try:
-                backend = normalize_simulator_backend(lib)
+                backend = "spectre" if cmd == "spectre-benchmark" else normalize_simulator_backend(lib)
                 if backend == "spectre":
-                    resolve_spectre_cmd(lib)
+                    validate_spectre_accel(lib)
+                    resolved = resolve_spectre_cmd(lib)
+                    self.status_var.set(f"Spectre command: {resolved}")
                 else:
                     resolve_hspice_cmd(lib)
             except Exception as exc:
@@ -1966,6 +2056,7 @@ class AmpSysGUI:
         self.telemetry_remainder = ""
         self.telemetry_pending.clear()
         self.telemetry_events.clear()
+        self.build_device_progress.clear()
         self.last_points.clear()
         self.log_text.delete("1.0", "end")
         self.status_var.set(f"Starting {cmd}...")
@@ -2048,6 +2139,8 @@ class AmpSysGUI:
     def animate_build_progress(self) -> None:
         if self.active_cmd != "build-library" or not self.proc or self.proc.poll() is not None:
             return
+        if self.build_device_progress:
+            return
         elapsed = max(0.0, time.time() - self.build_started_at)
         current = self.progress_var.get()
         target = min(95.0, 8.0 + 87.0 * (1.0 - math.exp(-elapsed / 45.0)))
@@ -2106,7 +2199,27 @@ class AmpSysGUI:
     def handle_event(self, event: Dict[str, Any]) -> None:
         status = event.get("status", "")
         phase = event.get("phase", "")
-        if status == "generation":
+        if phase == "build_library" and status in {"device_start", "batch", "device_done"}:
+            device = str(event.get("device") or event.get("dut") or "device").lower()
+            progress = safe_float(event.get("progress"), 0.0)
+            self.build_device_progress[device] = max(0.0, min(1.0, progress))
+            if self.build_device_progress:
+                total = sum(self.build_device_progress.values()) / 2.0
+                self.progress_var.set(max(self.progress_var.get(), min(98.0, total * 100.0)))
+            if status == "device_start":
+                work_base = str(event.get("work_base") or "")
+                total_points = int(safe_float(event.get("total_points"), 0.0))
+                suffix = f" scratch={work_base}" if work_base else ""
+                self.status_var.set(f"Building LUT {device.upper()} start  {total_points:,} points{suffix}")
+            elif status == "batch":
+                b = event.get("batch", "")
+                n = event.get("total_batches", "")
+                rate = safe_float(event.get("points_per_sec"), 0.0)
+                self.status_var.set(f"Building LUT {device.upper()} batch {b}/{n}  {rate:.0f} pts/s")
+            elif status == "device_done":
+                rate = safe_float(event.get("points_per_sec"), 0.0)
+                self.status_var.set(f"Building LUT {device.upper()} done  {rate:.0f} pts/s")
+        elif status == "generation":
             gen = event.get("generation", 0)
             max_gen = event.get("max_generations", 1)
             self.progress_var.set(100 * safe_float(event.get("progress"), gen / max(1, max_gen)))
@@ -2116,7 +2229,12 @@ class AmpSysGUI:
         elif status == "start":
             if phase == "build_library" and event.get("total_points"):
                 simulator = str(event.get("simulator") or "simulator").upper()
-                self.status_var.set(f"Building LUT: {event.get('total_points'):,} {simulator} points")
+                accel = str(event.get("spectre_accel") or "").strip()
+                threads = str(event.get("spectre_threads_resolved") or event.get("spectre_threads") or "").strip()
+                extra = ""
+                if simulator == "SPECTRE":
+                    extra = f"  accel={accel or 'auto'} mt={threads or 'auto'}"
+                self.status_var.set(f"Building LUT: {event.get('total_points'):,} {simulator} points{extra}")
                 self.progress_var.set(2)
             elif phase == "optimize":
                 self.status_var.set("Optimization started")
@@ -2443,4 +2561,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

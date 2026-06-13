@@ -150,7 +150,10 @@ def main() -> int:
         "'compiled_engine':ampsys_runner.has_compiled_engine(ampsys_gui.DEFAULT_ENGINE_ROOT),"
         "'runner_would_delegate':ampsys_runner.should_delegate_to_core('optimize', ['optimize']),"
         "'runner_would_delegate_self_test':ampsys_runner.should_delegate_to_core('self-test', ['self-test']),"
-        "'runner_would_delegate_optimize':ampsys_runner.should_delegate_to_core('optimize', ['optimize'])"
+        "'runner_would_delegate_optimize':ampsys_runner.should_delegate_to_core('optimize', ['optimize']),"
+        "'runner_would_delegate_spectre_benchmark':ampsys_runner.should_delegate_to_core('spectre-benchmark', ['spectre-benchmark']),"
+        "'spectre_threads_auto':ampsys_runner.auto_spectre_threads({'spectre_threads':'auto'}),"
+        "'spectre_accel_default':ampsys_runner.spectre_accel_label({'spectre_accel':'auto'})"
         "}, ensure_ascii=False))"
     )
     payload["quick_check_command"] = cmd + ["-X", "utf8", "-c", quick_code]
