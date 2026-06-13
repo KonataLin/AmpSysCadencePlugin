@@ -1001,6 +1001,17 @@ def apply_spectre_env_settings(env: Dict[str, str], lib: Dict[str, Any]) -> None
     env["AMPSYS_SPECTRE_THREADS"] = str(lib.get("spectre_threads") or "auto")
     env["AMPSYS_SPECTRE_ACCEL"] = str(lib.get("spectre_accel") or "auto")
     env.setdefault("AMPSYS_SPECTRE_MAXNOTES", "1")
+    optional_env = {
+        "spectre_batch_points": "AMPSYS_SPECTRE_BATCH_POINTS",
+        "spectre_batch_workers": "AMPSYS_SPECTRE_BATCH_WORKERS",
+        "spectre_device_workers": "AMPSYS_SPECTRE_DEVICE_WORKERS",
+        "spectre_scratch": "AMPSYS_SPECTRE_SCRATCH",
+        "spectre_max_combos_per_batch": "AMPSYS_SPECTRE_MAX_COMBOS_PER_BATCH",
+    }
+    for key, env_name in optional_env.items():
+        value = str(lib.get(key) or "").strip()
+        if value and value.lower() not in {"auto", "default"}:
+            env[env_name] = value
 
 
 def _spectre_env_cmd_parts() -> List[str]:
@@ -1640,6 +1651,11 @@ def run_build_library(project_path: Path) -> None:
         "spectre_threads": str(lib.get("spectre_threads") or "auto"),
         "spectre_threads_resolved": auto_spectre_threads(lib),
         "spectre_accel": spectre_accel_label(lib),
+        "spectre_batch_points": str(lib.get("spectre_batch_points") or "auto"),
+        "spectre_batch_workers": str(lib.get("spectre_batch_workers") or "auto"),
+        "spectre_device_workers": str(lib.get("spectre_device_workers") or "auto"),
+        "spectre_scratch": str(lib.get("spectre_scratch") or ""),
+        "spectre_max_combos_per_batch": str(lib.get("spectre_max_combos_per_batch") or "auto"),
         "time": time.time(),
     })
     os.environ["AMPSYS_BUILD_TELEMETRY"] = str(telemetry)
@@ -1668,31 +1684,149 @@ def tiny_spectre_project(project: Dict[str, Any], project_path: Path, accel: str
     lib["cache_dir"] = str(root / f"cache_{accel.replace('+', 'p').replace('=', '_')}")
     lib["temp_dir"] = str(root / "tmp")
     lib["force_rescan"] = True
-    lib["L_list"] = [get_float(lib, "L_min", 0.18e-6) or 0.18e-6]
+    source_l = expanded_l_list(lib)
+    l_points = max(1, get_int_from_env("AMPSYS_SPECTRE_BENCH_L_POINTS", 1))
+    lib["L_list"] = source_l[:l_points]
     vdd = get_float(lib, "process_vdd", 1.8)
-    lib["vgs_start"] = 0.0
-    lib["vgs_stop"] = min(vdd, 0.6)
-    lib["vgs_step"] = min(vdd, 0.6)
-    lib["vds_start"] = 0.1
-    lib["vds_stop"] = min(vdd, 0.9)
-    lib["vds_step"] = max(0.1, min(vdd, 0.9) - 0.1)
-    lib["vsb_start"] = 0.0
-    lib["vsb_stop"] = 0.0
-    lib["vsb_step"] = 0.1
+    vgs_start, vgs_full_stop, vgs_step = parse_range(lib, "vgs", (0.0, vdd, 0.02))
+    vds_start, vds_full_stop, vds_step = parse_range(lib, "vds", (0.05, vdd, 0.05))
+    vsb_start, vsb_full_stop, vsb_step = parse_range(lib, "vsb", (0.0, 0.0, 0.1))
+    vgs_points = min(range_point_count(vgs_start, vgs_full_stop, vgs_step), max(2, get_int_from_env("AMPSYS_SPECTRE_BENCH_VGS_POINTS", 9)))
+    vds_points = min(range_point_count(vds_start, vds_full_stop, vds_step), max(2, get_int_from_env("AMPSYS_SPECTRE_BENCH_VDS_POINTS", 4)))
+    vsb_points = min(range_point_count(vsb_start, vsb_full_stop, vsb_step), max(1, get_int_from_env("AMPSYS_SPECTRE_BENCH_VSB_POINTS", 1)))
+    lib["vgs_start"] = vgs_start
+    lib["vgs_stop"] = vgs_start + vgs_step * (vgs_points - 1)
+    lib["vgs_step"] = vgs_step
+    lib["vds_start"] = vds_start
+    lib["vds_stop"] = vds_start + vds_step * (vds_points - 1)
+    lib["vds_step"] = vds_step
+    lib["vsb_start"] = vsb_start
+    lib["vsb_stop"] = vsb_start + vsb_step * (vsb_points - 1) if vsb_step else vsb_start
+    lib["vsb_step"] = vsb_step
     lib["use_batch_mode"] = True
     return bench
 
 
+def get_int_from_env(name: str, default: int) -> int:
+    try:
+        value = int(float(os.environ.get(name, "") or default))
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
 def project_grid_summary(lib: Dict[str, Any]) -> Dict[str, int]:
-    l_list = parse_float_list(lib.get("L_list"))
-    n_l = len(l_list) if l_list else 20
+    l_list = expanded_l_list(lib)
+    n_l = len(l_list)
     vgs = parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02))
     vds = parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.05))
     vsb = parse_range(lib, "vsb", (0.0, 0.0, 0.1))
-    n_vgs = int((vgs[1] - vgs[0]) / vgs[2]) + 1 if vgs[2] else 1
-    n_vds = int((vds[1] - vds[0]) / vds[2]) + 1 if vds[2] else 1
-    n_vsb = int((vsb[1] - vsb[0]) / vsb[2]) + 1 if vsb[2] else 1
+    n_vgs = range_point_count(*vgs)
+    n_vds = range_point_count(*vds)
+    n_vsb = range_point_count(*vsb)
     return {"L": n_l, "VGS": n_vgs, "VDS": n_vds, "VSB": n_vsb, "total_points": n_l * n_vgs * n_vds * n_vsb * 2}
+
+
+def range_point_count(start: float, stop: float, step: float) -> int:
+    if not step:
+        return 1
+    span = (stop - start) / step
+    if span < 0:
+        return 1
+    return max(1, int(round(span)) + 1)
+
+
+def expanded_l_list(lib: Dict[str, Any]) -> List[float]:
+    explicit = parse_float_list(lib.get("L_list"))
+    if explicit:
+        return explicit
+    l_min = get_float(lib, "L_min", 0.18e-6) or 0.18e-6
+    l_max = 25.0 * l_min
+    return generate_l_grid(l_min, l_max)
+
+
+def generate_l_grid(l_min: float, l_max: float, num_points: int = 200, mode: str = "adaptive") -> List[float]:
+    if mode == "adaptive":
+        threshold = 0.5e-6
+        if l_min < threshold < l_max:
+            n_short = int(num_points * 0.6)
+            n_long = num_points - n_short
+            l_short = geomspace(l_min, threshold, n_short)
+            l_long = geomspace(threshold, l_max, n_long + 1)[1:]
+            values = l_short + l_long
+        else:
+            values = geomspace(l_min, l_max, num_points)
+    elif mode == "log":
+        values = geomspace(l_min, l_max, num_points)
+    else:
+        values = linspace(l_min, l_max, num_points)
+    return [round(float(value), 12) for value in values]
+
+
+def linspace(start: float, stop: float, count: int) -> List[float]:
+    if count <= 1:
+        return [float(start)]
+    step = (stop - start) / (count - 1)
+    return [start + step * idx for idx in range(count)]
+
+
+def geomspace(start: float, stop: float, count: int) -> List[float]:
+    if count <= 1:
+        return [float(start)]
+    if start <= 0 or stop <= 0:
+        return linspace(start, stop, count)
+    log_start = math.log(start)
+    log_stop = math.log(stop)
+    return [math.exp(value) for value in linspace(log_start, log_stop, count)]
+
+
+def spectre_benchmark_estimate(full_grid: Dict[str, int], modes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    full_points = int(full_grid.get("total_points") or 0)
+    estimates: List[Dict[str, Any]] = []
+    ok_modes = [m for m in modes if m.get("status") == "ok"]
+    for mode in ok_modes:
+        bench_grid = mode.get("grid") or {}
+        bench_points = int(bench_grid.get("total_points") or 0)
+        elapsed = float(mode.get("elapsed_s") or 0.0)
+        cache = mode.get("cache") or {}
+        bytes_total = int(cache.get("bytes") or 0)
+        points_per_second = (bench_points / elapsed) if bench_points > 0 and elapsed > 0 else 0.0
+        estimated_elapsed = (full_points / points_per_second) if points_per_second > 0 else None
+        estimated_bytes = (bytes_total * full_points / bench_points) if bench_points > 0 else None
+        estimates.append({
+            "accel": mode.get("accel", ""),
+            "bench_points": bench_points,
+            "bench_elapsed_s": elapsed,
+            "points_per_second": points_per_second,
+            "full_grid_points": full_points,
+            "scale_factor": (full_points / bench_points) if bench_points > 0 else None,
+            "estimated_elapsed_s": estimated_elapsed,
+            "estimated_elapsed_min": (estimated_elapsed / 60.0) if estimated_elapsed is not None else None,
+            "estimated_cache_bytes": int(estimated_bytes) if estimated_bytes is not None else None,
+            "under_20min_target": (estimated_elapsed <= 20 * 60) if estimated_elapsed is not None else None,
+        })
+    best = None
+    if estimates:
+        best = min(
+            (item for item in estimates if item["estimated_elapsed_s"] is not None),
+            key=lambda item: item["estimated_elapsed_s"],
+            default=None,
+        )
+    max_scale = max((float(item.get("scale_factor") or 0.0) for item in estimates), default=0.0)
+    confidence = "medium" if ok_modes and max_scale <= 5000 else "low"
+    return {
+        "full_grid": full_grid,
+        "estimates": estimates,
+        "best_accel": best.get("accel") if best else None,
+        "best_estimated_elapsed_min": best.get("estimated_elapsed_min") if best else None,
+        "best_under_20min_target": best.get("under_20min_target") if best else None,
+        "confidence": confidence,
+        "note": (
+            "Estimate is based on a controlled small Spectre LUT sample using the same parser/cache format. "
+            "It avoids a full LUT run; full runtime can differ with license checkout, filesystem, PDK model cost, "
+            "and large-batch Spectre scaling."
+        ),
+    }
 
 
 def run_spectre_benchmark(project_path: Path, modes: Optional[List[str]] = None) -> None:
@@ -1714,7 +1848,8 @@ def run_spectre_benchmark(project_path: Path, modes: Optional[List[str]] = None)
         "status": "ok",
         "project": str(project_path),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "note": "Tiny-grid benchmark only; it does not validate full LUT runtime and does not modify the real cache_dir.",
+        "note": "Small-grid benchmark only; it estimates full LUT runtime without modifying the real cache_dir.",
+        "full_grid": project_grid_summary(lib),
         "modes": [],
     }
     for accel in modes:
@@ -1749,6 +1884,7 @@ def run_spectre_benchmark(project_path: Path, modes: Optional[List[str]] = None)
                 "error": str(exc),
                 "telemetry": bench_project.get("telemetry_path", ""),
             })
+    summary["full_grid_estimate"] = spectre_benchmark_estimate(summary["full_grid"], summary["modes"])
     write_json(root / "summary.json", summary)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 

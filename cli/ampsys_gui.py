@@ -346,6 +346,11 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "spectre_cmd": "spectre",
             "spectre_threads": "auto",
             "spectre_accel": "auto",
+            "spectre_batch_points": "auto",
+            "spectre_batch_workers": "auto",
+            "spectre_device_workers": "auto",
+            "spectre_scratch": "",
+            "spectre_max_combos_per_batch": "auto",
             "cache_dir": str(default_lut_cache_dir(project_dir)),
             "temp_dir": str(default_runtime_temp_dir(project_dir)),
             "force_rescan": False,
@@ -505,9 +510,8 @@ def sanitize_loaded_project(project: Dict[str, Any], project_path: Path) -> bool
             settings[key] = value
             changed = True
 
-    temp_dir = str(default_runtime_temp_dir(project_dir))
-    if lib.get("temp_dir") != temp_dir:
-        lib["temp_dir"] = temp_dir
+    if not str(lib.get("temp_dir") or "").strip():
+        lib["temp_dir"] = str(default_runtime_temp_dir(project_dir))
         changed = True
 
     cache_text = str(lib.get("cache_dir") or "")
@@ -642,6 +646,10 @@ class AmpSysGUI:
         self.status_var = tk.StringVar(root, "Ready")
         self.spectre_hint_var = tk.StringVar(root, "Spectre AutoSearch only finds the executable; select the PDK model file manually.")
         self.progress_var = tk.DoubleVar(root, 0.0)
+        self.library_progress_var = tk.DoubleVar(root, 0.0)
+        self.library_status_var = tk.StringVar(root, "LUT builder idle")
+        self.progress_text_var = tk.StringVar(root, "0%")
+        self.library_progress_text_var = tk.StringVar(root, "0%")
         self.bulk_current_var = tk.StringVar(root, "")
         self.field_entries: Dict[str, ttk.Entry] = {}
         self.weight_scale_vars: Dict[str, tk.DoubleVar] = {}
@@ -782,6 +790,26 @@ class AmpSysGUI:
         for bag in (self.lib_vars, self.spec_vars, self.cfg_vars, self.settings_vars, self.top_vars):
             for var in bag.vars.values():
                 var.trace_add("write", self.schedule_status_update)
+        self.progress_var.trace_add("write", lambda *_args: self.update_progress_texts())
+        self.library_progress_var.trace_add("write", lambda *_args: self.update_progress_texts())
+        self.update_progress_texts()
+
+    def update_progress_texts(self) -> None:
+        self.progress_text_var.set(f"{max(0.0, min(100.0, self.progress_var.get())):.0f}%")
+        self.library_progress_text_var.set(f"{max(0.0, min(100.0, self.library_progress_var.get())):.0f}%")
+
+    def is_library_task(self) -> bool:
+        return self.active_cmd in {"build-library", "spectre-benchmark"}
+
+    def set_current_progress(self, value: float) -> None:
+        value = max(0.0, min(100.0, float(value)))
+        if self.is_library_task():
+            self.library_progress_var.set(value)
+        else:
+            self.progress_var.set(value)
+
+    def set_library_status(self, text: str) -> None:
+        self.library_status_var.set(text)
 
     def schedule_status_update(self, *_args) -> None:
         if not self.flow_status_vars:
@@ -1295,10 +1323,18 @@ class AmpSysGUI:
         self.field(lut, "Spectre cmd", self.lib_vars.vars["spectre_cmd"], 6, 0, width=42, field_key="library.spectre_cmd")
         self.field(lut, "Spectre threads", self.lib_vars.vars["spectre_threads"], 6, 2, field_key="library.spectre_threads")
         self.combo(lut, "Spectre accel", self.lib_vars.vars["spectre_accel"], 7, 0, SPECTRE_ACCEL_CHOICES)
-        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=8, column=0, padx=12, pady=8, sticky="ew")
-        ttk.Button(lut, text="Benchmark Spectre", command=lambda: self.start_runner("spectre-benchmark")).grid(row=8, column=1, padx=12, pady=8, sticky="ew")
-        ttk.Button(lut, text="AutoSearch Spectre", command=self.auto_search_spectre).grid(row=8, column=2, columnspan=2, padx=12, pady=8, sticky="ew")
-        ttk.Label(lut, textvariable=self.spectre_hint_var, style="MutedCard.TLabel").grid(row=9, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="w")
+        self.field(lut, "Spectre batch pts", self.lib_vars.vars["spectre_batch_points"], 7, 2, field_key="library.spectre_batch_points")
+        self.field(lut, "Spectre workers", self.lib_vars.vars["spectre_batch_workers"], 8, 0, field_key="library.spectre_batch_workers")
+        self.field(lut, "Device workers", self.lib_vars.vars["spectre_device_workers"], 8, 2, field_key="library.spectre_device_workers")
+        self.field(lut, "Spectre scratch", self.lib_vars.vars["spectre_scratch"], 9, 0, width=42, browse="dir", field_key="library.spectre_scratch")
+        self.field(lut, "Max combos/batch", self.lib_vars.vars["spectre_max_combos_per_batch"], 9, 2, field_key="library.spectre_max_combos_per_batch")
+        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=10, column=0, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="Benchmark Spectre", command=lambda: self.start_runner("spectre-benchmark")).grid(row=10, column=1, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="AutoSearch Spectre", command=self.auto_search_spectre).grid(row=10, column=2, columnspan=2, padx=12, pady=8, sticky="ew")
+        ttk.Label(lut, textvariable=self.library_status_var, style="MutedCard.TLabel").grid(row=11, column=0, columnspan=3, padx=12, pady=(0, 2), sticky="w")
+        ttk.Label(lut, textvariable=self.library_progress_text_var, style="MutedCard.TLabel", width=5, anchor="e").grid(row=11, column=3, padx=12, pady=(0, 2), sticky="e")
+        ttk.Progressbar(lut, variable=self.library_progress_var, maximum=100).grid(row=12, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+        ttk.Label(lut, textvariable=self.spectre_hint_var, style="MutedCard.TLabel").grid(row=13, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="w")
         row += 1
 
         devices = self.flow_section(page, "devices", "Device Currents", row)
@@ -1513,9 +1549,13 @@ class AmpSysGUI:
                 return
             cache_dir = str(lib.get("cache_dir") or "").strip() or "(default cache)"
             temp_dir = str(lib.get("temp_dir") or "").strip() or "(auto temp)"
+            scratch = str(lib.get("spectre_scratch") or "").strip() or "auto local scratch"
+            batch_points = str(lib.get("spectre_batch_points") or "auto").strip()
+            workers = str(lib.get("spectre_batch_workers") or "auto").strip()
+            device_workers = str(lib.get("spectre_device_workers") or "auto").strip()
             accel = spectre_accel_label(lib)
             self.spectre_hint_var.set(
-                f"Spectre: {cmd}  | mt/process={threads}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir} (raw scratch may auto-move to Linux local /tmp; Benchmark uses a tiny temporary grid)"
+                f"Spectre: {cmd}  | mt/process={threads}  | batch workers={workers}  | device workers={device_workers}  | batch pts={batch_points}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir}  | scratch={scratch}"
             )
         except Exception as exc:
             self.spectre_hint_var.set(f"Spectre setup needs attention: {exc}")
@@ -1740,7 +1780,8 @@ class AmpSysGUI:
         }
         project["library"] = self.coerce_library()
         project["library"]["force_rescan"] = False
-        project["library"]["temp_dir"] = str(default_runtime_temp_dir(self.project_path.parent))
+        if not str(project["library"].get("temp_dir") or "").strip():
+            project["library"]["temp_dir"] = str(default_runtime_temp_dir(self.project_path.parent))
         project["specs"] = self.coerce_specs()
         project["specs"]["enable_vds_iteration"] = True
         project["config"] = self.coerce_config()
@@ -1757,7 +1798,12 @@ class AmpSysGUI:
         floats = {"temperature", "process_vdd", "L_min", "scan_width", "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop", "vds_step", "vsb_start", "vsb_stop", "vsb_step"}
         ints = {"batch_size", "batch_timeout_ms"}
         defaults = default_project(self.project_path)["library"]
-        string_defaults = {"model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd", "spectre_threads", "spectre_accel", "cache_dir", "temp_dir"}
+        string_defaults = {
+            "model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd",
+            "spectre_threads", "spectre_accel", "spectre_batch_points",
+            "spectre_batch_workers", "spectre_device_workers", "spectre_scratch",
+            "spectre_max_combos_per_batch", "cache_dir", "temp_dir"
+        }
         out: Dict[str, Any] = {}
         for k, v in raw.items():
             text = str(v).strip() if v is not None else ""
@@ -1981,7 +2027,7 @@ class AmpSysGUI:
                 if backend == "spectre":
                     validate_spectre_accel(lib)
                     resolved = resolve_spectre_cmd(lib)
-                    self.status_var.set(f"Spectre command: {resolved}")
+                    self.set_library_status(f"Spectre command: {resolved}")
                 else:
                     resolve_hspice_cmd(lib)
             except Exception as exc:
@@ -2048,8 +2094,13 @@ class AmpSysGUI:
         self.save_project()
         self.runner_log_path = self.project_path.parent / f"ampsys_{cmd}.log"
         self.runner_log_path.write_text(f"AmpSys runner log: {cmd}\nProject: {self.project_path}\nStarted: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n", encoding="utf-8")
-        self.progress_var.set(0)
         self.active_cmd = cmd
+        if self.is_library_task():
+            self.library_progress_var.set(0)
+            self.set_library_status(f"Starting {cmd}...")
+        else:
+            self.progress_var.set(0)
+            self.status_var.set(f"Starting {cmd}...")
         self.build_started_at = time.time()
         self.telemetry_seen = 0
         self.telemetry_offset = 0
@@ -2059,7 +2110,6 @@ class AmpSysGUI:
         self.build_device_progress.clear()
         self.last_points.clear()
         self.log_text.delete("1.0", "end")
-        self.status_var.set(f"Starting {cmd}...")
         telemetry = Path(self.collect_project()["telemetry_path"])
         if telemetry.exists():
             telemetry.write_text("", encoding="utf-8")
@@ -2077,9 +2127,13 @@ class AmpSysGUI:
             if self.runner_log_path:
                 with self.runner_log_path.open("a", encoding="utf-8") as f:
                     f.write(f"\nRunner launch failed: {exc}\n")
-            self.status_var.set("Runner launch failed")
+            if self.is_library_task():
+                self.set_library_status("Runner launch failed")
+                self.library_progress_var.set(0)
+            else:
+                self.status_var.set("Runner launch failed")
+                self.progress_var.set(0)
             self.active_cmd = ""
-            self.progress_var.set(0)
             messagebox.showerror("AmpSys runner failed to start", f"{exc}\n\nLog: {self.runner_log_path}")
             self.update_flow_statuses()
             return
@@ -2123,18 +2177,45 @@ class AmpSysGUI:
         else:
             code = self.proc.poll() if self.proc else 0
             if code == 0:
-                self.progress_var.set(100)
-                self.status_var.set("Done")
+                self.set_current_progress(100)
+                if self.active_cmd == "spectre-benchmark":
+                    self.show_spectre_benchmark_summary()
+                elif self.is_library_task():
+                    self.set_library_status("Done")
+                else:
+                    self.status_var.set("Done")
                 self.refresh_results()
                 self.update_flow_statuses()
                 logging.info("Runner finished successfully")
             else:
-                self.status_var.set(f"Runner exited with code {code}")
+                if self.is_library_task():
+                    self.set_library_status(f"Runner exited with code {code}")
+                else:
+                    self.status_var.set(f"Runner exited with code {code}")
                 logging.error("Runner failed with code %s. log=%s", code, self.runner_log_path)
                 messagebox.showerror("AmpSys runner failed", f"Runner exited with code {code}. Check the Run log.")
             self.proc = None
             self.active_cmd = ""
             self.update_flow_statuses()
+
+    def show_spectre_benchmark_summary(self) -> None:
+        summary_path = self.project_path.parent / "spectre_benchmark" / "summary.json"
+        try:
+            summary = read_json(summary_path, {})
+            estimate = summary.get("full_grid_estimate", {}) or {}
+            accel = estimate.get("best_accel") or "n/a"
+            minutes = estimate.get("best_estimated_elapsed_min")
+            target = estimate.get("best_under_20min_target")
+            confidence = estimate.get("confidence") or "unknown"
+            if isinstance(minutes, (int, float)):
+                target_text = "under 20 min" if target is True else "over 20 min"
+                self.set_library_status(f"Spectre benchmark done: best={accel}, est={minutes:.1f} min ({target_text}, {confidence} confidence)")
+            else:
+                self.set_library_status(f"Spectre benchmark done: see {summary_path}")
+            logging.info("Spectre benchmark summary: %s", json.dumps(summary, indent=2, ensure_ascii=False))
+        except Exception as exc:
+            logging.warning("Could not read Spectre benchmark summary: %s", exc)
+            self.set_library_status("Spectre benchmark done")
 
     def animate_build_progress(self) -> None:
         if self.active_cmd != "build-library" or not self.proc or self.proc.poll() is not None:
@@ -2142,17 +2223,20 @@ class AmpSysGUI:
         if self.build_device_progress:
             return
         elapsed = max(0.0, time.time() - self.build_started_at)
-        current = self.progress_var.get()
+        current = self.library_progress_var.get()
         target = min(95.0, 8.0 + 87.0 * (1.0 - math.exp(-elapsed / 45.0)))
         if target > current:
-            self.progress_var.set(target)
-            self.status_var.set(f"Building LUT library... {target:.0f}%")
+            self.library_progress_var.set(target)
+            self.set_library_status(f"Building LUT library... {target:.0f}%")
 
     def stop_process(self) -> None:
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             logging.warning("Runner terminated by user")
-            self.status_var.set("Stopping...")
+            if self.is_library_task():
+                self.set_library_status("Stopping...")
+            else:
+                self.status_var.set("Stopping...")
 
     def read_telemetry(self) -> None:
         telemetry = Path(self.project.get("telemetry_path") or self.project_path.parent / "telemetry.jsonl")
@@ -2205,20 +2289,20 @@ class AmpSysGUI:
             self.build_device_progress[device] = max(0.0, min(1.0, progress))
             if self.build_device_progress:
                 total = sum(self.build_device_progress.values()) / 2.0
-                self.progress_var.set(max(self.progress_var.get(), min(98.0, total * 100.0)))
+                self.library_progress_var.set(max(self.library_progress_var.get(), min(98.0, total * 100.0)))
             if status == "device_start":
                 work_base = str(event.get("work_base") or "")
                 total_points = int(safe_float(event.get("total_points"), 0.0))
                 suffix = f" scratch={work_base}" if work_base else ""
-                self.status_var.set(f"Building LUT {device.upper()} start  {total_points:,} points{suffix}")
+                self.set_library_status(f"Building LUT {device.upper()} start  {total_points:,} points{suffix}")
             elif status == "batch":
                 b = event.get("batch", "")
                 n = event.get("total_batches", "")
                 rate = safe_float(event.get("points_per_sec"), 0.0)
-                self.status_var.set(f"Building LUT {device.upper()} batch {b}/{n}  {rate:.0f} pts/s")
+                self.set_library_status(f"Building LUT {device.upper()} batch {b}/{n}  {rate:.0f} pts/s")
             elif status == "device_done":
                 rate = safe_float(event.get("points_per_sec"), 0.0)
-                self.status_var.set(f"Building LUT {device.upper()} done  {rate:.0f} pts/s")
+                self.set_library_status(f"Building LUT {device.upper()} done  {rate:.0f} pts/s")
         elif status == "generation":
             gen = event.get("generation", 0)
             max_gen = event.get("max_generations", 1)
@@ -2234,18 +2318,28 @@ class AmpSysGUI:
                 extra = ""
                 if simulator == "SPECTRE":
                     extra = f"  accel={accel or 'auto'} mt={threads or 'auto'}"
-                self.status_var.set(f"Building LUT: {event.get('total_points'):,} {simulator} points{extra}")
-                self.progress_var.set(2)
+                self.set_library_status(f"Building LUT: {event.get('total_points'):,} {simulator} points{extra}")
+                self.library_progress_var.set(2)
             elif phase == "optimize":
                 self.status_var.set("Optimization started")
                 self.progress_var.set(1)
             else:
-                self.status_var.set(f"{phase} started")
+                if self.is_library_task():
+                    self.set_library_status(f"{phase} started")
+                else:
+                    self.status_var.set(f"{phase} started")
         elif status == "done":
-            self.progress_var.set(100)
-            self.status_var.set(f"{phase} done")
+            if phase == "build_library" or self.is_library_task():
+                self.library_progress_var.set(100)
+                self.set_library_status(f"{phase} done")
+            else:
+                self.progress_var.set(100)
+                self.status_var.set(f"{phase} done")
         elif status == "error":
-            self.status_var.set(event.get("message", "Error"))
+            if phase == "build_library" or self.is_library_task():
+                self.set_library_status(event.get("message", "Error"))
+            else:
+                self.status_var.set(event.get("message", "Error"))
 
     def redraw_charts(self, _event=None) -> None:
         if not hasattr(self, "conv_canvas") or not hasattr(self, "web_canvas"):
