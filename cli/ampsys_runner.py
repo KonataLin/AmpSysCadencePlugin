@@ -164,6 +164,8 @@ def prepare_project_for_core(argv: List[str]) -> List[str]:
     lib = project.get("library", {})
     changed = False
     backend = normalize_simulator_backend(lib)
+    if backend == "spectre" and isolate_spectre_cache_dir(lib):
+        changed = True
     if backend == "hspice" and lib.get("hspice_dir"):
         lib["hspice_cmd"] = resolve_hspice_cmd(lib)
         changed = True
@@ -598,8 +600,54 @@ def infer_model_stem_from_cache_key(key: str, lib: Dict[str, Any]) -> str:
     return key
 
 
+def spectre_cache_dir_from(cache_dir: Any) -> str:
+    text = str(cache_dir or "").strip()
+    if not text:
+        return text
+    normalized = text.replace("\\", "/").rstrip("/")
+    if normalized.endswith("/autoflow_cache"):
+        return normalized + "_spectre"
+    return text
+
+
+def isolate_spectre_cache_dir(lib: Dict[str, Any]) -> bool:
+    if normalize_simulator_backend(lib) != "spectre":
+        return False
+    isolated = spectre_cache_dir_from(lib.get("cache_dir"))
+    if isolated and isolated != lib.get("cache_dir"):
+        lib["cache_dir"] = isolated
+        return True
+    return False
+
+
 def library_cache_dir(lib: Dict[str, Any], project_path: Path) -> Path:
     return Path(lib.get("cache_dir") or project_path.parent / "libraries").expanduser()
+
+
+def backend_matches_library(lib: Dict[str, Any], saved_lib: Dict[str, Any]) -> bool:
+    """Keep HSPICE and Spectre caches format-compatible but never silently mix them."""
+    requested = normalize_simulator_backend(lib)
+    saved = normalize_simulator_backend(saved_lib) if isinstance(saved_lib, dict) else "auto"
+    if requested == "auto" or saved == "auto":
+        return True
+    return requested == saved
+
+
+def manifest_backend_matches(manifest: Path, lib: Dict[str, Any]) -> bool:
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8-sig"))
+        saved_lib = payload.get("library") or {}
+    except Exception:
+        return True
+    return backend_matches_library(lib, saved_lib)
+
+
+def raw_cache_pair_allowed_without_manifest(lib: Dict[str, Any], cache_dir: Path) -> bool:
+    """Allow legacy raw .pkl pairs, but avoid silent HSPICE/Spectre cache mixups."""
+    if normalize_simulator_backend(lib) != "spectre":
+        return True
+    normalized = str(cache_dir).replace("\\", "/").rstrip("/").lower()
+    return normalized.endswith("/autoflow_cache_spectre") or normalized.endswith("_spectre") or "/spectre" in normalized
 
 
 def ampflow_cache_pairs(lib: Dict[str, Any], cache_dir: Path) -> List[tuple]:
@@ -627,18 +675,18 @@ def find_ampflow_cache_pair(lib: Dict[str, Any], cache_dir: Path) -> Optional[tu
 def library_ready_marker(lib: Dict[str, Any], project_path: Path) -> Optional[Path]:
     cache_dir = library_cache_dir(lib, project_path)
     manifest = cache_dir / "manifest.json"
-    if manifest.is_file():
+    if manifest.is_file() and manifest_backend_matches(manifest, lib):
         return manifest
     pair = find_ampflow_cache_pair(lib, cache_dir)
-    if pair:
+    if pair and raw_cache_pair_allowed_without_manifest(lib, cache_dir):
         return pair[0]
     child = cache_dir / "autoflow_cache"
     if child.is_dir():
         child_manifest = child / "manifest.json"
-        if child_manifest.is_file():
+        if child_manifest.is_file() and manifest_backend_matches(child_manifest, lib):
             return child_manifest
         child_pair = find_ampflow_cache_pair(lib, child)
-        if child_pair:
+        if child_pair and raw_cache_pair_allowed_without_manifest(lib, child):
             return child_pair[0]
     return None
 
@@ -669,13 +717,18 @@ def prepare_existing_library_cache(lib: Dict[str, Any], project_path: Path) -> O
     child = cache_dir / "autoflow_cache"
     child_pair = find_ampflow_cache_pair(lib, child) if child.is_dir() else None
 
+    if direct_pair and not raw_cache_pair_allowed_without_manifest(lib, cache_dir):
+        direct_pair = None
+    if child_pair and not raw_cache_pair_allowed_without_manifest(lib, child):
+        child_pair = None
+
     if not direct_pair and child_pair:
         cache_dir = child
         lib["cache_dir"] = str(child)
         direct_pair = child_pair
 
     manifest = cache_dir / "manifest.json"
-    if manifest.is_file():
+    if manifest.is_file() and manifest_backend_matches(manifest, lib):
         if not model_stem(lib.get("model_path")):
             if direct_pair:
                 key = direct_pair[0].name[len("nmos_"):-len(".pkl")]
@@ -819,21 +872,27 @@ def _spectre_candidate_paths(root: Path) -> List[Path]:
     names = ("spectre.exe", "spectre.bat", "spectre.cmd") if sys.platform.startswith("win") else ("spectre",)
     subdirs = (
         "",
+        "tools.lnx86/spectre/bin/64bit",
+        "spectre/bin/64bit",
         "bin",
         "BIN",
         "tools/bin",
         "tools.lnx86/bin",
         "tools.lnx86/spectre/bin",
-        "tools.lnx86/spectre/bin/64bit",
         "spectre/bin",
-        "spectre/bin/64bit",
     )
     out: List[Path] = []
     for sub in subdirs:
         base = root / sub if sub else root
         for name in names:
             out.append(base / name)
-    for pattern in ("*/bin/spectre", "*/tools.lnx86/bin/spectre", "*/tools.lnx86/spectre/bin/64bit/spectre"):
+    for pattern in (
+        "*/bin/spectre",
+        "*/*/bin/spectre",
+        "*/tools.lnx86/bin/spectre",
+        "*/tools.lnx86/spectre/bin/64bit/spectre",
+        "*/tools/bin/spectre",
+    ):
         try:
             out.extend(root.glob(pattern))
         except OSError:
@@ -951,6 +1010,9 @@ def _spectre_args_have_threads(args: List[str]) -> bool:
 def apply_auto_spectre_threads(cmd_parts: List[str], lib: Optional[Dict[str, Any]] = None) -> List[str]:
     if _spectre_args_have_threads(cmd_parts):
         return cmd_parts
+    accel_raw = str((lib or {}).get("spectre_accel") or os.environ.get("AMPSYS_SPECTRE_ACCEL") or "auto").strip().lower()
+    if accel_raw in {"off", "none", "false", "0", "baseline", "spectre"}:
+        return cmd_parts
     threads = auto_spectre_threads(lib)
     if threads <= 1:
         return cmd_parts
@@ -961,7 +1023,7 @@ def spectre_accel_label(lib: Optional[Dict[str, Any]] = None) -> str:
     lib = lib or {}
     raw = str(lib.get("spectre_accel") or os.environ.get("AMPSYS_SPECTRE_ACCEL") or "auto").strip()
     if not raw or raw.lower() in {"auto", "default"}:
-        return "auto (++aps, fallback to baseline)"
+        return "auto (+aps, fallback to baseline)"
     if raw.lower() in {"off", "none", "false", "0", "baseline", "spectre"}:
         return "off (baseline Spectre)"
     return raw
@@ -1034,6 +1096,10 @@ def _resolve_spectre_head(head: str) -> Optional[str]:
     path = Path(os.path.expandvars(text)).expanduser()
     if path.is_file():
         return str(path)
+    if "/" not in text and "\\" not in text and _is_spectre_program_name(text):
+        candidates = find_spectre_candidates({"spectre_cmd": ""}, max_results=1)
+        if candidates:
+            return candidates[0]
     if "/" not in text and "\\" not in text:
         found = shutil.which(text)
         if found:
@@ -1078,9 +1144,12 @@ def find_spectre_candidates(lib: Optional[Dict[str, Any]] = None, max_results: i
             "/opt/cadence",
             "/cadence",
             "/tools/cadence",
+            "/tools/eda",
             "/eda/cadence",
+            "/apps/cadence",
+            "/usr/local/cadence",
         ))
-        for pattern in ("/home/*/opt/cadence/*", "/home/*/cadence/*"):
+        for pattern in ("/home/*/opt/cadence/*", "/home/*/cadence/*", "/home/*/eda/cadence/*"):
             roots.extend(Path(p) for p in Path("/").glob(pattern.lstrip("/")))
     elif sys.platform.startswith("win"):
         roots.extend(Path(p) for p in (
@@ -1111,6 +1180,7 @@ def find_spectre_candidates(lib: Optional[Dict[str, Any]] = None, max_results: i
     def score(path: Path) -> tuple:
         text = str(path).replace("\\", "/").lower()
         s = 0
+        s -= 60 if "/spectre/bin/64bit/spectre" in text else 0
         s -= 30 if "/mmsim" in text else 0
         s -= 20 if "/bin/spectre" in text or text.endswith("/spectre") else 0
         s -= 10 if "/opt/cadence" in text else 0
@@ -1123,6 +1193,15 @@ def resolve_spectre_cmd(lib: Dict[str, Any]) -> str:
     explicit_dir = str(lib.get("spectre_dir") or "").strip().strip('"').strip("'")
     explicit_cmd = str(lib.get("spectre_cmd") or "").strip()
     extra_args = _spectre_extra_args(explicit_cmd)
+    cmd_parts = _split_cmd_args(explicit_cmd)
+    cmd_head = cmd_parts[0] if cmd_parts else ""
+    if cmd_head:
+        cmd_path = Path(cmd_head.strip('"').strip("'")).expanduser()
+        try:
+            if cmd_path.is_file():
+                return " ".join(apply_auto_spectre_threads([_quote_cmd_part(str(cmd_path)), *cmd_parts[1:]], lib)).strip()
+        except OSError:
+            pass
 
     if explicit_dir:
         path = Path(explicit_dir).expanduser()
@@ -1140,11 +1219,10 @@ def resolve_spectre_cmd(lib: Dict[str, Any]) -> str:
         raise FileNotFoundError(f"Spectre executable was not found under {path}. Tried: {tried}")
 
     if explicit_cmd:
-        cmd_parts = _split_cmd_args(explicit_cmd)
         cmd_head = cmd_parts[0] if cmd_parts else explicit_cmd
         if cmd_head.startswith(("+", "-")):
             env_parts = _spectre_env_cmd_parts()
-            base = _resolve_spectre_head(env_parts[0]) if env_parts else (shutil.which("spectre") or "spectre")
+            base = _resolve_spectre_head(env_parts[0]) if env_parts else (_resolve_spectre_head("spectre") or "spectre")
             return " ".join(apply_auto_spectre_threads([_quote_cmd_part(base), *cmd_parts], lib)).strip()
 
         resolved_head = _resolve_spectre_head(cmd_head)
@@ -1167,7 +1245,7 @@ def resolve_spectre_cmd(lib: Dict[str, Any]) -> str:
         env_head = _resolve_spectre_head(env_parts[0]) or env_parts[0]
         return " ".join(apply_auto_spectre_threads([_quote_cmd_part(env_head), *env_parts[1:]], lib)).strip()
 
-    found = shutil.which("spectre")
+    found = _resolve_spectre_head("spectre")
     if found:
         return " ".join(apply_auto_spectre_threads([_quote_cmd_part(found)], lib)).strip()
 
@@ -1186,6 +1264,8 @@ def create_flow(project: Dict[str, Any]):
     cache_dir = lib.get("cache_dir") or str(Path(project.get("project_dir", ".")).resolve() / "libraries")
     temp_dir = lib.get("temp_dir") or str(Path(project.get("project_dir", ".")).resolve() / "workspace" / "tmp")
     simulator_backend = normalize_simulator_backend(lib)
+    if simulator_backend == "spectre" and isolate_spectre_cache_dir(lib):
+        cache_dir = str(lib.get("cache_dir") or cache_dir)
     if simulator_backend == "spectre":
         validate_spectre_accel(lib)
         apply_spectre_env_settings(os.environ, lib)
@@ -1195,10 +1275,10 @@ def create_flow(project: Dict[str, Any]):
         "cellname_nmos": lib["nmos_name"],
         "cellname_pmos": lib["pmos_name"],
         "model_lib": lib.get("model_lib", "tt"),
-        "L_list": parse_float_list(lib.get("L_list")),
+        "L_list": parse_float_list(lib.get("L_list")) or generate_l_grid(get_float(lib, "L_min", 0.18e-6) or 0.18e-6, 25.0 * (get_float(lib, "L_min", 0.18e-6) or 0.18e-6)),
         "L_min": get_float(lib, "L_min", 0.18e-6),
-        "VGS_range": parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02)),
-        "VDS_range": parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.05)),
+        "VGS_range": parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.002)),
+        "VDS_range": parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.02)),
         "VSB_range": parse_range(lib, "vsb", (0.0, 0.0, 0.1)),
         "scan_width": get_float(lib, "scan_width", 10e-6),
         "temperature": get_float(lib, "temperature", 25.0),
@@ -1688,8 +1768,8 @@ def tiny_spectre_project(project: Dict[str, Any], project_path: Path, accel: str
     l_points = max(1, get_int_from_env("AMPSYS_SPECTRE_BENCH_L_POINTS", 1))
     lib["L_list"] = source_l[:l_points]
     vdd = get_float(lib, "process_vdd", 1.8)
-    vgs_start, vgs_full_stop, vgs_step = parse_range(lib, "vgs", (0.0, vdd, 0.02))
-    vds_start, vds_full_stop, vds_step = parse_range(lib, "vds", (0.05, vdd, 0.05))
+    vgs_start, vgs_full_stop, vgs_step = parse_range(lib, "vgs", (0.0, vdd, 0.002))
+    vds_start, vds_full_stop, vds_step = parse_range(lib, "vds", (0.05, vdd, 0.02))
     vsb_start, vsb_full_stop, vsb_step = parse_range(lib, "vsb", (0.0, 0.0, 0.1))
     vgs_points = min(range_point_count(vgs_start, vgs_full_stop, vgs_step), max(2, get_int_from_env("AMPSYS_SPECTRE_BENCH_VGS_POINTS", 9)))
     vds_points = min(range_point_count(vds_start, vds_full_stop, vds_step), max(2, get_int_from_env("AMPSYS_SPECTRE_BENCH_VDS_POINTS", 4)))
@@ -1718,8 +1798,8 @@ def get_int_from_env(name: str, default: int) -> int:
 def project_grid_summary(lib: Dict[str, Any]) -> Dict[str, int]:
     l_list = expanded_l_list(lib)
     n_l = len(l_list)
-    vgs = parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.02))
-    vds = parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.05))
+    vgs = parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.002))
+    vds = parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.02))
     vsb = parse_range(lib, "vsb", (0.0, 0.0, 0.1))
     n_vgs = range_point_count(*vgs)
     n_vds = range_point_count(*vds)
@@ -1814,6 +1894,8 @@ def spectre_benchmark_estimate(full_grid: Dict[str, int], modes: List[Dict[str, 
         )
     max_scale = max((float(item.get("scale_factor") or 0.0) for item in estimates), default=0.0)
     confidence = "medium" if ok_modes and max_scale <= 5000 else "low"
+    if max_scale > 50_000:
+        confidence = "very_low"
     return {
         "full_grid": full_grid,
         "estimates": estimates,
@@ -1823,8 +1905,9 @@ def spectre_benchmark_estimate(full_grid: Dict[str, int], modes: List[Dict[str, 
         "confidence": confidence,
         "note": (
             "Estimate is based on a controlled small Spectre LUT sample using the same parser/cache format. "
-            "It avoids a full LUT run; full runtime can differ with license checkout, filesystem, PDK model cost, "
-            "and large-batch Spectre scaling."
+            "It avoids a full LUT run. For full-resolution grids, tiny samples are dominated by Spectre startup "
+            "and can be misleading; use a same-spacing sample with multiple L points before committing to a full LUT. "
+            "Runtime can differ with license checkout, filesystem, PDK model cost, and large-batch Spectre scaling."
         ),
     }
 
@@ -1839,7 +1922,7 @@ def run_spectre_benchmark(project_path: Path, modes: Optional[List[str]] = None)
         raise FileNotFoundError("Model path is required for Spectre benchmark. Select the exact Spectre .lib/.scs file manually.")
     if not Path(model_text).expanduser().is_file():
         raise FileNotFoundError(f"Model path was not found: {model_text}")
-    modes = modes or ["off", "+aps", "++aps"]
+    modes = modes or ["auto"]
     root = project_path.parent / "spectre_benchmark"
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
@@ -1858,7 +1941,10 @@ def run_spectre_benchmark(project_path: Path, modes: Optional[List[str]] = None)
         write_json(bench_path, bench_project)
         t0 = time.time()
         try:
-            cmd = [sys.executable, str(Path(__file__).resolve()), "build-library", "--project", str(bench_path)]
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable, "build-library", "--project", str(bench_path)]
+            else:
+                cmd = [sys.executable, str(Path(__file__).resolve()), "build-library", "--project", str(bench_path)]
             proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
             elapsed = time.time() - t0
             log_path = bench_path.with_name("build_library_stdout.log")

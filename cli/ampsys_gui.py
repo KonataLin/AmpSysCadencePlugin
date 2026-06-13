@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """AmpSys Cadence GUI.
 
 This file is intentionally open and readable.  The private AmpSys engine is
@@ -134,6 +134,16 @@ def default_lut_cache_dir(project_dir: Path) -> Path:
     return ROOT / "libraries"
 
 
+def spectre_cache_dir_from(cache_dir: Any) -> str:
+    text = str(cache_dir or "").strip()
+    if not text:
+        return text
+    normalized = text.replace("\\", "/").rstrip("/")
+    if normalized.endswith("/autoflow_cache"):
+        return normalized + "_spectre"
+    return text
+
+
 def command_available(cmd: List[str]) -> bool:
     if not cmd:
         return False
@@ -224,6 +234,73 @@ def safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except Exception:
         return default
+
+
+def range_point_count(start: float, stop: float, step: float) -> int:
+    if not step:
+        return 1
+    span = (stop - start) / step
+    if span < 0:
+        return 1
+    return max(1, int(round(span)) + 1)
+
+
+def parse_float_list(value: Any) -> List[float]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple)):
+        out: List[float] = []
+        for item in value:
+            try:
+                out.append(float(item))
+            except Exception:
+                pass
+        return out
+    out: List[float] = []
+    for part in str(value).replace(";", ",").split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            out.append(float(text))
+        except Exception:
+            pass
+    return out
+
+
+def estimated_l_count(lib: Dict[str, Any]) -> int:
+    explicit = parse_float_list(lib.get("L_list"))
+    return len(explicit) if explicit else 200
+
+
+def lut_grid_summary(lib: Dict[str, Any]) -> Dict[str, int]:
+    vdd = safe_float(lib.get("process_vdd"), 1.8)
+    n_l = estimated_l_count(lib)
+    n_vgs = range_point_count(
+        safe_float(lib.get("vgs_start"), 0.0),
+        safe_float(lib.get("vgs_stop"), vdd),
+        safe_float(lib.get("vgs_step"), 0.002),
+    )
+    n_vds = range_point_count(
+        safe_float(lib.get("vds_start"), 0.05),
+        safe_float(lib.get("vds_stop"), vdd),
+        safe_float(lib.get("vds_step"), 0.02),
+    )
+    n_vsb = range_point_count(
+        safe_float(lib.get("vsb_start"), 0.0),
+        safe_float(lib.get("vsb_stop"), 0.0),
+        safe_float(lib.get("vsb_step"), 0.1),
+    )
+    return {"L": n_l, "VGS": n_vgs, "VDS": n_vds, "VSB": n_vsb, "total_points": n_l * n_vgs * n_vds * n_vsb * 2}
+
+
+def fmt_bytes(num_bytes: float) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(max(0.0, num_bytes))
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{value:.0f} B"
+        value /= 1024.0
 
 
 def rel_or_abs(path: str) -> str:
@@ -359,10 +436,10 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "scan_width": 10e-6,
             "vgs_start": 0.0,
             "vgs_stop": 1.8,
-            "vgs_step": 0.02,
+            "vgs_step": 0.002,
             "vds_start": 0.05,
             "vds_stop": 1.8,
-            "vds_step": 0.05,
+            "vds_step": 0.02,
             "vsb_start": 0.0,
             "vsb_stop": 0.0,
             "vsb_step": 0.1,
@@ -521,6 +598,13 @@ def sanitize_loaded_project(project: Dict[str, Any], project_path: Path) -> bool
         if inferred:
             lib["cache_dir"] = str(inferred)
             cache_path = inferred
+            changed = True
+
+    if normalize_simulator_backend(lib) == "spectre":
+        isolated_cache = spectre_cache_dir_from(lib.get("cache_dir"))
+        if isolated_cache and isolated_cache != lib.get("cache_dir"):
+            lib["cache_dir"] = isolated_cache
+            cache_path = Path(isolated_cache).expanduser()
             changed = True
 
     if os.name != "nt":
@@ -947,10 +1031,39 @@ class AmpSysGUI:
                 initial = dialog_initial_dir(var.get(), ROOT)
                 if browse == "dir":
                     val = filedialog.askdirectory(initialdir=initial)
+                elif browse == "spectre":
+                    val = filedialog.askopenfilename(
+                        initialdir=initial,
+                        title="Select Spectre executable",
+                        filetypes=[
+                            ("Spectre executable", ("spectre", "spectre.exe", "spectre.bat", "spectre.cmd")),
+                            ("All files", "*"),
+                        ],
+                    )
                 else:
-                    val = filedialog.askopenfilename(initialdir=initial)
+                    val = filedialog.askopenfilename(
+                        initialdir=initial,
+                        title="Select PDK model library",
+                        filetypes=[
+                            ("Model libraries", "*.lib *.scs *.sp *.spi"),
+                            ("All files", "*"),
+                        ],
+                    )
                 if val:
                     var.set(val)
+                    if browse == "spectre" and hasattr(self, "lib_vars"):
+                        try:
+                            self.lib_vars.set("spectre_dir", str(Path(val).parent))
+                            if not str(self.lib_vars.get("spectre_threads", "")).strip():
+                                self.lib_vars.set("spectre_threads", "auto")
+                            if not str(self.lib_vars.get("spectre_accel", "")).strip():
+                                self.lib_vars.set("spectre_accel", "auto")
+                            self.save_project_silent()
+                            self.update_field_styles()
+                            self.update_spectre_hint()
+                            self.status_var.set(f"Spectre executable selected: {val}")
+                        except Exception:
+                            logging.exception("Could not apply selected Spectre executable: %s", val)
             ttk.Button(cell, text="...", command=choose, width=3).grid(row=1, column=1, sticky="e")
         return ent
 
@@ -1138,10 +1251,13 @@ class AmpSysGUI:
             inferred = infer_cache_dir()
             if not inferred:
                 return
-            self.lib_vars.set("cache_dir", str(inferred))
             cache_path = inferred
         else:
             cache_path = Path(cache_text).expanduser()
+
+        if normalize_simulator_backend(self.coerce_library()) == "spectre":
+            cache_path = Path(spectre_cache_dir_from(str(cache_path))).expanduser()
+        self.lib_vars.set("cache_dir", str(cache_path))
 
         candidates = [cache_path]
         if cache_path.name != "autoflow_cache":
@@ -1310,17 +1426,17 @@ class AmpSysGUI:
 
         row = 1
         lut = self.flow_section(page, "library", "LUT Cache", row)
-        self.field(lut, "Cache dir", self.lib_vars.vars["cache_dir"], 0, 0, width=58, browse="dir", field_key="library.cache_dir")
+        self.field(lut, "LUT cache folder", self.lib_vars.vars["cache_dir"], 0, 0, width=58, browse="dir", field_key="library.cache_dir")
         self.field(lut, "NMOS name", self.lib_vars.vars["nmos_name"], 1, 0, field_key="library.nmos_name")
         self.field(lut, "PMOS name", self.lib_vars.vars["pmos_name"], 1, 2, field_key="library.pmos_name")
         self.field(lut, "Corner/lib", self.lib_vars.vars["model_lib"], 2, 0, field_key="library.model_lib")
         self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2, field_key="library.temperature")
         self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0, field_key="library.process_vdd")
         self.combo(lut, "Simulator", self.lib_vars.vars["simulator_backend"], 3, 2, ("auto", "hspice", "spectre"))
-        self.field(lut, "Model path", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
+        self.field(lut, "PDK model file", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
         self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
         self.field(lut, "Spectre dir", self.lib_vars.vars["spectre_dir"], 5, 2, width=42, browse="dir", field_key="library.spectre_dir")
-        self.field(lut, "Spectre cmd", self.lib_vars.vars["spectre_cmd"], 6, 0, width=42, field_key="library.spectre_cmd")
+        self.field(lut, "Spectre executable", self.lib_vars.vars["spectre_cmd"], 6, 0, width=42, browse="spectre", field_key="library.spectre_cmd")
         self.field(lut, "Spectre threads", self.lib_vars.vars["spectre_threads"], 6, 2, field_key="library.spectre_threads")
         self.combo(lut, "Spectre accel", self.lib_vars.vars["spectre_accel"], 7, 0, SPECTRE_ACCEL_CHOICES)
         self.field(lut, "Spectre batch pts", self.lib_vars.vars["spectre_batch_points"], 7, 2, field_key="library.spectre_batch_points")
@@ -1554,8 +1670,14 @@ class AmpSysGUI:
             workers = str(lib.get("spectre_batch_workers") or "auto").strip()
             device_workers = str(lib.get("spectre_device_workers") or "auto").strip()
             accel = spectre_accel_label(lib)
+            grid = lut_grid_summary(lib)
+            points = grid["total_points"]
+            cache_est = points * 24 * 4
+            raw_est = points * 650
+            mode_note = "safe WSL/VM mode" if device_workers.lower() in {"", "auto", "1", "off", "false", "none", "0"} and workers.lower() in {"", "auto", "1", "off", "false", "none", "0"} else "parallel/server mode"
+            fast_note = "tested fast setting: threads=2, batch workers=4, device workers=2"
             self.spectre_hint_var.set(
-                f"Spectre: {cmd}  | mt/process={threads}  | batch workers={workers}  | device workers={device_workers}  | batch pts={batch_points}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir}  | scratch={scratch}"
+                f"Spectre: {cmd}  | grid L/VGS/VDS/VSB={grid['L']}/{grid['VGS']}/{grid['VDS']}/{grid['VSB']} ({points:,} pts, both MOS)  | est cache~{fmt_bytes(cache_est)}, raw~{fmt_bytes(raw_est)}  | {mode_note}; {fast_note}  | mt/process={threads}  | batch workers={workers}  | device workers={device_workers}  | batch pts={batch_points}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir}  | scratch={scratch}"
             )
         except Exception as exc:
             self.spectre_hint_var.set(f"Spectre setup needs attention: {exc}")
@@ -1817,6 +1939,10 @@ class AmpSysGUI:
                 out[k] = defaults[k]
             else:
                 out[k] = rel_or_abs(v)
+        if normalize_simulator_backend(out) == "spectre":
+            isolated_cache = spectre_cache_dir_from(out.get("cache_dir"))
+            if isolated_cache and isolated_cache != out.get("cache_dir"):
+                out["cache_dir"] = isolated_cache
         return out
 
     def coerce_specs(self) -> Dict[str, Any]:
@@ -1984,7 +2110,7 @@ class AmpSysGUI:
                 "AmpSys",
                 "Spectre executable was not found.\n\n"
                 "Fill Spectre dir with the directory containing the spectre executable, "
-                "or put spectre on PATH before launching the GUI.",
+                "or put spectre on PATH before launching the GUI. The PDK model file must still be selected manually.",
             )
             return
         selected = Path(candidates[0])
@@ -2004,10 +2130,11 @@ class AmpSysGUI:
                 "AmpSys",
                 "Spectre executable found:\n"
                 f"{selected}\n\n"
-                "Other candidates were also found; keep this one or choose Spectre dir manually.",
+                "Other candidates were also found; keep this one or choose Spectre dir manually. "
+                "The PDK model file is never guessed automatically.",
             )
         else:
-            messagebox.showinfo("AmpSys", f"Spectre executable found:\n{selected}")
+            messagebox.showinfo("AmpSys", f"Spectre executable found:\n{selected}\n\nSelect the PDK model file manually.")
 
     def validate_before_run(self, cmd: str) -> bool:
         project = self.collect_project()
@@ -2045,6 +2172,30 @@ class AmpSysGUI:
             messagebox.showwarning("AmpSys", "Complete these LUT fields first:\n" + ", ".join(missing_lut_fields))
             self.update_flow_statuses()
             return False
+        if cmd == "build-library" and normalize_simulator_backend(lib) == "spectre":
+            grid = lut_grid_summary(lib)
+            points = grid["total_points"]
+            if points >= 5_000_000:
+                device_workers = str(lib.get("spectre_device_workers") or "auto").strip().lower()
+                batch_workers = str(lib.get("spectre_batch_workers") or "auto").strip().lower()
+                mode_note = "WSL/VM safe mode" if device_workers in {"", "auto", "1", "off", "false", "none", "0"} and batch_workers in {"", "auto", "1", "off", "false", "none", "0"} else "parallel/server mode"
+                ok = messagebox.askyesno(
+                    "AmpSys Spectre LUT build",
+                    "This is a large Spectre LUT build.\n\n"
+                    f"Grid: L/VGS/VDS/VSB = {grid['L']}/{grid['VGS']}/{grid['VDS']}/{grid['VSB']}\n"
+                    f"Total: {points:,} points for NMOS+PMOS\n"
+                    f"Mode: {mode_note}\n"
+                    f"Estimated final cache: ~{fmt_bytes(points * 24 * 4)}\n"
+                    f"Estimated transient raw I/O: ~{fmt_bytes(points * 650)}\n\n"
+                    "Active LUT cache is kept as .pkl + _data/*.npy for memmap speed; "
+                    "compress only archived copies after the build. For a new machine, "
+                    "run Benchmark Spectre first and keep scratch on a Linux-local disk. "
+                    "Continue building the full LUT now?",
+                )
+                if not ok:
+                    self.set_library_status("Full Spectre LUT build cancelled. Run Benchmark Spectre first.")
+                    self.update_flow_statuses()
+                    return False
         if cmd == "optimize":
             if not self.library_ready(lib):
                 markers = "\n".join(str(p) for p in expected_library_markers(lib, self.project_path)[:6])
