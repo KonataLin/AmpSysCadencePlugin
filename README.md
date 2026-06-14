@@ -64,7 +64,7 @@ flowchart LR
 | 从 schematic 进入优化 | 在 Virtuoso 菜单中抽取当前打开的 schematic，无需手写 netlist |
 | HSPICE/Spectre 建表 | 支持 Windows HSPICE 建 LUT，也支持 Linux/WSL Cadence Spectre 建 LUT |
 | 可视化 GUI | LUT、器件电流、spec、权重、收敛过程和结果在一个流程页里完成 |
-| Spectre AutoSearch / APS | PDK model 由用户手动选择；Spectre 可执行文件可一键搜索；默认 `++aps` 加速，失败自动回退普通 Spectre |
+| Spectre AutoSearch / APS | PDK model 由用户手动选择；Spectre 可执行文件可一键搜索；默认 `+aps` 加速，失败自动回退普通 Spectre |
 | CDF 写回 | 支持 `W / L / fingers / m` 等常见 CDF 参数别名，SMIC18MMRF 已验证 `Total Width + Finger Width` 写回 |
 | 详细日志 | GUI、SKILL、runner、optimization、telemetry 都会落盘，方便定位环境问题 |
 | 核心保护 | GUI/SKILL/wrapper 公开，AmpSys 内部算法以 protected binary 发布 |

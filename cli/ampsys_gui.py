@@ -1675,7 +1675,7 @@ class AmpSysGUI:
             cache_est = points * 24 * 4
             raw_est = points * 650
             mode_note = "safe WSL/VM mode" if device_workers.lower() in {"", "auto", "1", "off", "false", "none", "0"} and workers.lower() in {"", "auto", "1", "off", "false", "none", "0"} else "parallel/server mode"
-            fast_note = "tested fast setting: threads=2, batch workers=4, device workers=2"
+            fast_note = "fast workstation setting used in validation: threads=5, batch workers=1, device workers=2"
             self.spectre_hint_var.set(
                 f"Spectre: {cmd}  | grid L/VGS/VDS/VSB={grid['L']}/{grid['VGS']}/{grid['VDS']}/{grid['VSB']} ({points:,} pts, both MOS)  | est cache~{fmt_bytes(cache_est)}, raw~{fmt_bytes(raw_est)}  | {mode_note}; {fast_note}  | mt/process={threads}  | batch workers={workers}  | device workers={device_workers}  | batch pts={batch_points}  | accel={accel}  | cache={cache_dir}  | temp={temp_dir}  | scratch={scratch}"
             )
