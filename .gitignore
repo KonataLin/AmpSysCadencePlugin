@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 workspace/
+tests/
 libraries/
 *.log
 *.request
