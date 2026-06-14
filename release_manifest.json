@@ -1,26 +1,29 @@
 {
-  "name": "AmpSysCadencePlugin",
-  "built_at": "2026-06-13 20:08:46",
-  "method": "cython-private+pyinstaller-onedir",
-  "platform": "windows_amd64",
-  "builder_python": "windows_amd64_py312",
-  "core_dirs": [
-    "core/linux_x86_64",
-    "core/linux_x86_64.tar.gz",
-    "core/windows_amd64"
-  ],
-  "engine_packages": [
-    "AmpSys",
-    "yami",
-    "TheScanner",
-    "acsolver"
-  ],
-  "python_command": "py -3",
-  "external_protector": "",
-  "notes": [
-    "GUI/SKILL/CLI wrappers are readable.",
-    "Private AmpSys engine packages are compiled into standalone native core binaries.",
-    "The core binary is selected by OS/CPU, not by the user's Python minor version.",
-    "For stronger commercial anti-tamper, run a VMProtect/Themida-style protector with --protector-cmd."
-  ]
+    "name":  "AmpSysCadencePlugin",
+    "built_at":  "2026-06-14 10:40:00",
+    "method":  "cython-private+pyinstaller-onedir",
+    "platform":  "multi",
+    "builder_python":  "windows_amd64_py312 + linux_x86_64_py310",
+    "core_dirs":  [
+                      "core/linux_x86_64",
+                      "core/linux_x86_64.tar.gz",
+                      "core/windows_amd64"
+                  ],
+    "engine_packages":  [
+                            "AmpSys",
+                            "yami",
+                            "TheScanner",
+                            "acsolver"
+                        ],
+    "python_command":  "py -3",
+    "external_protector":  "",
+    "notes":  [
+                  "GUI/SKILL/CLI wrappers are readable.",
+                  "Private AmpSys engine packages are compiled into standalone native core binaries.",
+                  "The core binary is selected by OS/CPU, not by the user\u0027s Python minor version.",
+                  "For stronger commercial anti-tamper, run a VMProtect/Themida-style protector with --protector-cmd.",
+                  "Windows core was rebuilt on Windows Python 3.12.",
+                  "Linux core was rebuilt inside IC617 glibc 2.17 / Python 3.10 for wider Linux compatibility.",
+                  "Release tiny Spectre LUT was validated on SMIC180MMRF in IC617."
+              ]
 }
