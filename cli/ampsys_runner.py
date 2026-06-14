@@ -445,7 +445,15 @@ def project_debug_summary(project: Dict[str, Any], project_path: Path, cmd: str)
             "spectre_cmd": lib.get("spectre_cmd", ""),
             "spectre_threads": lib.get("spectre_threads", ""),
             "spectre_accel": lib.get("spectre_accel", ""),
+            "spectre_l_param": lib.get("spectre_l_param", ""),
+            "spectre_w_param": lib.get("spectre_w_param", ""),
+            "spectre_extra_params": lib.get("spectre_extra_params", ""),
             "L_min": lib.get("L_min", ""),
+            "W_min": lib.get("W_min", ""),
+            "L_grid": lib.get("L_grid", ""),
+            "W_grid": lib.get("W_grid", ""),
+            "W_finger_min": lib.get("W_finger_min", ""),
+            "W_finger_max": lib.get("W_finger_max", ""),
             "L_list": lib.get("L_list", ""),
             "scan_width": lib.get("scan_width", ""),
             "vgs": [lib.get("vgs_start", ""), lib.get("vgs_stop", ""), lib.get("vgs_step", "")],
@@ -1277,6 +1285,11 @@ def create_flow(project: Dict[str, Any]):
         "model_lib": lib.get("model_lib", "tt"),
         "L_list": parse_float_list(lib.get("L_list")) or generate_l_grid(get_float(lib, "L_min", 0.18e-6) or 0.18e-6, 25.0 * (get_float(lib, "L_min", 0.18e-6) or 0.18e-6)),
         "L_min": get_float(lib, "L_min", 0.18e-6),
+        "W_min": get_float(lib, "W_min", get_float(lib, "L_min", 0.18e-6)),
+        "W_grid": get_float(lib, "W_grid", max((get_float(lib, "L_min", 0.18e-6) or 0.18e-6) / 10.0, 0.001e-6)),
+        "L_grid": get_float(lib, "L_grid", max((get_float(lib, "L_min", 0.18e-6) or 0.18e-6) / 10.0, 0.001e-6)),
+        "W_finger_max": get_float(lib, "W_finger_max", 10e-6),
+        "W_finger_min": get_float(lib, "W_finger_min", get_float(lib, "L_min", 0.18e-6)),
         "VGS_range": parse_range(lib, "vgs", (0.0, get_float(lib, "process_vdd", 1.8), 0.002)),
         "VDS_range": parse_range(lib, "vds", (0.05, get_float(lib, "process_vdd", 1.8), 0.02)),
         "VSB_range": parse_range(lib, "vsb", (0.0, 0.0, 0.1)),
@@ -1288,6 +1301,9 @@ def create_flow(project: Dict[str, Any]):
         "process_vdd": get_float(lib, "process_vdd", 1.8),
         "simulator_backend": simulator_backend,
         "spectre_cmd": resolve_spectre_cmd(lib) if simulator_backend == "spectre" else str(lib.get("spectre_cmd") or "spectre"),
+        "spectre_l_param": str(lib.get("spectre_l_param") or "l"),
+        "spectre_w_param": str(lib.get("spectre_w_param") or "w"),
+        "spectre_extra_params": str(lib.get("spectre_extra_params") or ""),
         "hspice_cmd": resolve_hspice_cmd(lib) if simulator_backend == "hspice" else str(lib.get("hspice_cmd") or "hspice -mt 2"),
         "cache_dir": cache_dir,
         "temp_dir": temp_dir,
@@ -1827,7 +1843,7 @@ def expanded_l_list(lib: Dict[str, Any]) -> List[float]:
 
 def generate_l_grid(l_min: float, l_max: float, num_points: int = 200, mode: str = "adaptive") -> List[float]:
     if mode == "adaptive":
-        threshold = 0.5e-6
+        threshold = min(l_max, max(3.0 * l_min, 2.8 * l_min))
         if l_min < threshold < l_max:
             n_short = int(num_points * 0.6)
             n_long = num_points - n_short

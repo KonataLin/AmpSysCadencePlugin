@@ -428,10 +428,18 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "spectre_device_workers": "auto",
             "spectre_scratch": "",
             "spectre_max_combos_per_batch": "auto",
+            "spectre_l_param": "l",
+            "spectre_w_param": "w",
+            "spectre_extra_params": "",
             "cache_dir": str(default_lut_cache_dir(project_dir)),
             "temp_dir": str(default_runtime_temp_dir(project_dir)),
             "force_rescan": False,
             "L_min": 0.18e-6,
+            "W_min": 0.5e-6,
+            "W_grid": 0.01e-6,
+            "L_grid": 0.01e-6,
+            "W_finger_min": 0.18e-6,
+            "W_finger_max": 10e-6,
             "L_list": "",
             "scan_width": 10e-6,
             "vgs_start": 0.0,
@@ -454,8 +462,8 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "power_max": 600e-6,
             "load_cap": 5e-12,
             "saturation_margin": 0.01,
-            "V_in_cm": 0.9,
-            "V_out_cm": 0.9,
+            "V_in_cm": "",
+            "V_out_cm": "",
             "area_knee_um2": 500.0,
             "enable_vds_iteration": True,
             "vds_max_iter": 20,
@@ -471,6 +479,11 @@ def default_project(project_path: Path) -> Dict[str, Any]:
             "fitness_e": OBJECTIVE_WEIGHT_DEFAULTS["fitness_e"],
             "fitness_f": OBJECTIVE_WEIGHT_DEFAULTS["fitness_f"],
             "fitness_g": OBJECTIVE_WEIGHT_DEFAULTS["fitness_g"],
+            "noise_gamma": 1.35,
+            "noise_freq": 1e3,
+            "noise_Cox": 8.42e-3,
+            "flicker_Kf_nmos": 4e-25,
+            "flicker_Kf_pmos": 1e-25,
         },
             "config": {
             "population_size": 40,
@@ -1224,6 +1237,9 @@ class AmpSysGUI:
         for key in ("V_in_cm", "V_out_cm", "saturation_margin"):
             text = str(self.spec_vars.get(key, "")).strip()
             self.set_entry_state(f"specs.{key}", "ok" if self.text_is_nonnegative(text) else ("neutral" if not text else "bad"))
+        for key in ("noise_gamma", "noise_freq", "noise_Cox", "flicker_Kf_nmos", "flicker_Kf_pmos"):
+            text = str(self.spec_vars.get(key, "")).strip()
+            self.set_entry_state(f"specs.{key}", "ok" if self.text_is_positive(text) else ("neutral" if not text else "bad"))
         self.set_entry_state("config.population_size", "ok" if safe_int(self.cfg_vars.get("population_size"), 0) > 0 else "bad")
         self.set_entry_state("config.max_generations", "ok" if safe_int(self.cfg_vars.get("max_generations"), 0) > 0 else "bad")
 
@@ -1320,6 +1336,11 @@ class AmpSysGUI:
             "gbw": "GBW MHz",
             "pm_min": "PM min deg",
             "load_cap": "Load cap pF",
+            "noise_gamma": "Noise gamma",
+            "noise_freq": "Noise frequency",
+            "noise_Cox": "Noise Cox",
+            "flicker_Kf_nmos": "NMOS flicker Kf",
+            "flicker_Kf_pmos": "PMOS flicker Kf",
         }
         nonnegative_fields = {
             "saturation_margin": "Saturation margin",
@@ -1433,24 +1454,33 @@ class AmpSysGUI:
         self.field(lut, "Temp C", self.lib_vars.vars["temperature"], 2, 2, field_key="library.temperature")
         self.field(lut, "VDD V", self.lib_vars.vars["process_vdd"], 3, 0, field_key="library.process_vdd")
         self.combo(lut, "Simulator", self.lib_vars.vars["simulator_backend"], 3, 2, ("auto", "hspice", "spectre"))
-        self.field(lut, "PDK model file", self.lib_vars.vars["model_path"], 4, 0, width=58, browse="file", field_key="library.model_path")
-        self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 5, 0, width=42, browse="dir", field_key="library.hspice_dir")
-        self.field(lut, "Spectre dir", self.lib_vars.vars["spectre_dir"], 5, 2, width=42, browse="dir", field_key="library.spectre_dir")
-        self.field(lut, "Spectre executable", self.lib_vars.vars["spectre_cmd"], 6, 0, width=42, browse="spectre", field_key="library.spectre_cmd")
-        self.field(lut, "Spectre threads", self.lib_vars.vars["spectre_threads"], 6, 2, field_key="library.spectre_threads")
-        self.combo(lut, "Spectre accel", self.lib_vars.vars["spectre_accel"], 7, 0, SPECTRE_ACCEL_CHOICES)
-        self.field(lut, "Spectre batch pts", self.lib_vars.vars["spectre_batch_points"], 7, 2, field_key="library.spectre_batch_points")
-        self.field(lut, "Spectre workers", self.lib_vars.vars["spectre_batch_workers"], 8, 0, field_key="library.spectre_batch_workers")
-        self.field(lut, "Device workers", self.lib_vars.vars["spectre_device_workers"], 8, 2, field_key="library.spectre_device_workers")
-        self.field(lut, "Spectre scratch", self.lib_vars.vars["spectre_scratch"], 9, 0, width=42, browse="dir", field_key="library.spectre_scratch")
-        self.field(lut, "Max combos/batch", self.lib_vars.vars["spectre_max_combos_per_batch"], 9, 2, field_key="library.spectre_max_combos_per_batch")
-        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=10, column=0, padx=12, pady=8, sticky="ew")
-        ttk.Button(lut, text="Benchmark Spectre", command=lambda: self.start_runner("spectre-benchmark")).grid(row=10, column=1, padx=12, pady=8, sticky="ew")
-        ttk.Button(lut, text="AutoSearch Spectre", command=self.auto_search_spectre).grid(row=10, column=2, columnspan=2, padx=12, pady=8, sticky="ew")
-        ttk.Label(lut, textvariable=self.library_status_var, style="MutedCard.TLabel").grid(row=11, column=0, columnspan=3, padx=12, pady=(0, 2), sticky="w")
-        ttk.Label(lut, textvariable=self.library_progress_text_var, style="MutedCard.TLabel", width=5, anchor="e").grid(row=11, column=3, padx=12, pady=(0, 2), sticky="e")
-        ttk.Progressbar(lut, variable=self.library_progress_var, maximum=100).grid(row=12, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
-        ttk.Label(lut, textvariable=self.spectre_hint_var, style="MutedCard.TLabel").grid(row=13, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="w")
+        self.field(lut, "L min m", self.lib_vars.vars["L_min"], 4, 0, field_key="library.L_min")
+        self.field(lut, "W min m", self.lib_vars.vars["W_min"], 4, 2, field_key="library.W_min")
+        self.field(lut, "L grid m", self.lib_vars.vars["L_grid"], 5, 0, field_key="library.L_grid")
+        self.field(lut, "W grid m", self.lib_vars.vars["W_grid"], 5, 2, field_key="library.W_grid")
+        self.field(lut, "Finger W min m", self.lib_vars.vars["W_finger_min"], 6, 0, field_key="library.W_finger_min")
+        self.field(lut, "Finger W max m", self.lib_vars.vars["W_finger_max"], 6, 2, field_key="library.W_finger_max")
+        self.field(lut, "PDK model file", self.lib_vars.vars["model_path"], 7, 0, width=58, browse="file", field_key="library.model_path")
+        self.field(lut, "HSPICE dir", self.lib_vars.vars["hspice_dir"], 8, 0, width=42, browse="dir", field_key="library.hspice_dir")
+        self.field(lut, "Spectre dir", self.lib_vars.vars["spectre_dir"], 8, 2, width=42, browse="dir", field_key="library.spectre_dir")
+        self.field(lut, "Spectre executable", self.lib_vars.vars["spectre_cmd"], 9, 0, width=42, browse="spectre", field_key="library.spectre_cmd")
+        self.field(lut, "Spectre threads", self.lib_vars.vars["spectre_threads"], 9, 2, field_key="library.spectre_threads")
+        self.combo(lut, "Spectre accel", self.lib_vars.vars["spectre_accel"], 10, 0, SPECTRE_ACCEL_CHOICES)
+        self.field(lut, "Spectre batch pts", self.lib_vars.vars["spectre_batch_points"], 10, 2, field_key="library.spectre_batch_points")
+        self.field(lut, "Spectre workers", self.lib_vars.vars["spectre_batch_workers"], 11, 0, field_key="library.spectre_batch_workers")
+        self.field(lut, "Device workers", self.lib_vars.vars["spectre_device_workers"], 11, 2, field_key="library.spectre_device_workers")
+        self.field(lut, "Spectre scratch", self.lib_vars.vars["spectre_scratch"], 12, 0, width=42, browse="dir", field_key="library.spectre_scratch")
+        self.field(lut, "Max combos/batch", self.lib_vars.vars["spectre_max_combos_per_batch"], 12, 2, field_key="library.spectre_max_combos_per_batch")
+        self.field(lut, "Spectre L param", self.lib_vars.vars["spectre_l_param"], 13, 0, field_key="library.spectre_l_param")
+        self.field(lut, "Spectre W param", self.lib_vars.vars["spectre_w_param"], 13, 2, field_key="library.spectre_w_param")
+        self.field(lut, "Spectre extra params", self.lib_vars.vars["spectre_extra_params"], 14, 0, width=58, field_key="library.spectre_extra_params")
+        ttk.Button(lut, text="Build Library", command=lambda: self.start_runner("build-library")).grid(row=15, column=0, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="Benchmark Spectre", command=lambda: self.start_runner("spectre-benchmark")).grid(row=15, column=1, padx=12, pady=8, sticky="ew")
+        ttk.Button(lut, text="AutoSearch Spectre", command=self.auto_search_spectre).grid(row=15, column=2, columnspan=2, padx=12, pady=8, sticky="ew")
+        ttk.Label(lut, textvariable=self.library_status_var, style="MutedCard.TLabel").grid(row=16, column=0, columnspan=3, padx=12, pady=(0, 2), sticky="w")
+        ttk.Label(lut, textvariable=self.library_progress_text_var, style="MutedCard.TLabel", width=5, anchor="e").grid(row=16, column=3, padx=12, pady=(0, 2), sticky="e")
+        ttk.Progressbar(lut, variable=self.library_progress_var, maximum=100).grid(row=17, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+        ttk.Label(lut, textvariable=self.spectre_hint_var, style="MutedCard.TLabel").grid(row=18, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="w")
         row += 1
 
         devices = self.flow_section(page, "devices", "Device Currents", row)
@@ -1553,6 +1583,13 @@ class AmpSysGUI:
             for idx, (key, label, default, _group, note) in enumerate(advanced_weights):
                 self.objective_weight_control(self.settings_body, key, label, default, term_row + 1 + idx // 3, (idx % 3) * 2, note)
             term_row += 2 + ((len(advanced_weights) + 2) // 3)
+        ttk.Label(self.settings_body, text="Noise Model", style="Card.TLabel", font=self.font_bold).grid(row=term_row, column=0, columnspan=6, sticky="w", padx=6, pady=(14, 0))
+        self.display_field(self.settings_body, "Gamma", "noise_gamma", term_row + 1, 0)
+        self.display_field(self.settings_body, "Noise freq Hz", "noise_freq", term_row + 1, 2)
+        self.display_field(self.settings_body, "Cox F/m2", "noise_Cox", term_row + 1, 4)
+        self.display_field(self.settings_body, "Kf NMOS", "flicker_Kf_nmos", term_row + 2, 0)
+        self.display_field(self.settings_body, "Kf PMOS", "flicker_Kf_pmos", term_row + 2, 2)
+        term_row += 3
         ttk.Label(self.settings_body, text="Terminal Order Preview", style="Card.TLabel", font=self.font_bold).grid(row=term_row, column=0, columnspan=6, sticky="w", padx=6, pady=(12, 0))
         term_cols = ("name", "type", "model", "raw", "order", "dgbs")
         self.term_tree = self.tree_with_scrollbars(self.settings_body, term_row + 1, 6, term_cols, height=5)
@@ -1917,14 +1954,20 @@ class AmpSysGUI:
     def coerce_library(self) -> Dict[str, Any]:
         raw = self.lib_vars.as_strings()
         bools = {"force_rescan", "use_batch_mode"}
-        floats = {"temperature", "process_vdd", "L_min", "scan_width", "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop", "vds_step", "vsb_start", "vsb_stop", "vsb_step"}
+        floats = {
+            "temperature", "process_vdd", "L_min", "W_min", "L_grid", "W_grid",
+            "W_finger_min", "W_finger_max", "scan_width",
+            "vgs_start", "vgs_stop", "vgs_step", "vds_start", "vds_stop",
+            "vds_step", "vsb_start", "vsb_stop", "vsb_step"
+        }
         ints = {"batch_size", "batch_timeout_ms"}
         defaults = default_project(self.project_path)["library"]
         string_defaults = {
             "model_lib", "simulator_backend", "hspice_cmd", "spectre_cmd",
             "spectre_threads", "spectre_accel", "spectre_batch_points",
             "spectre_batch_workers", "spectre_device_workers", "spectre_scratch",
-            "spectre_max_combos_per_batch", "cache_dir", "temp_dir"
+            "spectre_max_combos_per_batch", "spectre_l_param", "spectre_w_param",
+            "spectre_extra_params", "cache_dir", "temp_dir"
         }
         out: Dict[str, Any] = {}
         for k, v in raw.items():
