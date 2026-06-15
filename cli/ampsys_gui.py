@@ -1501,7 +1501,7 @@ class AmpSysGUI:
         self.warning_label = ttk.Label(toolbar, text="", style="MutedCard.TLabel")
         self.warning_label.pack(side="right")
 
-        cols = ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")
+        cols = ("name", "type", "nodes", "current_uA", "match_group", "value")
         self.device_tree = self.tree_with_scrollbars(devices, 1, 6, cols, height=8, selectmode="extended")
         for col, text, width in [
             ("name", "Name", 100),
@@ -1509,14 +1509,13 @@ class AmpSysGUI:
             ("nodes", "D/G/S/B or pins", 340),
             ("current_uA", "Id uA", 92),
             ("match_group", "Match", 100),
-            ("bw", "BW factor", 90),
             ("value", "R/C value", 110),
         ]:
             self.device_tree.heading(col, text=text)
             self.device_tree.column(col, width=width, minwidth=width, stretch=(col == "nodes"))
         self.device_tree.bind("<<TreeviewSelect>>", lambda _e: self.load_device_editor())
-        self.dev_edit = {k: tk.StringVar(self.root, "") for k in ("name", "type", "nodes", "current_uA", "match_group", "bw", "value")}
-        labels = [("Name", "name"), ("Type", "type"), ("Nodes", "nodes"), ("Id uA", "current_uA"), ("Match", "match_group"), ("BW", "bw"), ("R/C", "value")]
+        self.dev_edit = {k: tk.StringVar(self.root, "") for k in ("name", "type", "nodes", "current_uA", "match_group", "value")}
+        labels = [("Name", "name"), ("Type", "type"), ("Nodes", "nodes"), ("Id uA", "current_uA"), ("Match", "match_group"), ("R/C", "value")]
         editor = ttk.Frame(devices, style="StepBody.TFrame")
         editor.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(4, 0))
         for col in range(4):
@@ -1740,7 +1739,7 @@ class AmpSysGUI:
             ))
 
     def add_device(self) -> None:
-        self.devices.append({"name": f"M{len(self.devices)+1}", "type": "nmos", "nodes": ["D", "G", "S", "B"], "current": 10e-6, "match_group": "", "bw_factor": 1.0})
+        self.devices.append({"name": f"M{len(self.devices)+1}", "type": "nmos", "nodes": ["D", "G", "S", "B"], "current": 10e-6, "match_group": ""})
         self.refresh_device_table()
         self.save_project_silent()
 
@@ -1768,7 +1767,6 @@ class AmpSysGUI:
         self.dev_edit["nodes"].set(" ".join(d.get("nodes", [])))
         self.dev_edit["current_uA"].set(fmt_si(d.get("current", ""), 1e-6))
         self.dev_edit["match_group"].set(d.get("match_group", ""))
-        self.dev_edit["bw"].set(str(d.get("bw_factor", 1.0)))
         self.dev_edit["value"].set("" if d.get("value") in (None, "") else str(d.get("value")))
 
     def apply_device_editor(self) -> None:
@@ -1788,8 +1786,6 @@ class AmpSysGUI:
             current = self.dev_edit["current_uA"].get().strip()
             if current:
                 d["current"] = safe_float(current) * 1e-6
-            bw = self.dev_edit["bw"].get().strip()
-            d["bw_factor"] = safe_float(bw, 1.0) if bw else 1.0
             val = self.dev_edit["value"].get().strip()
             if val:
                 d["value"] = safe_float(val)
@@ -1839,7 +1835,6 @@ class AmpSysGUI:
                 " ".join(d.get("nodes", [])),
                 fmt_si(d.get("current", ""), 1e-6),
                 d.get("match_group", ""),
-                d.get("bw_factor", ""),
                 "" if d.get("value") in (None, "") else d.get("value"),
             ))
         if hasattr(self, "warning_label"):
@@ -1900,10 +1895,9 @@ class AmpSysGUI:
             for rec in devices:
                 row = rec.to_json()
                 old = old_by_name.get(row["name"], {})
-                for key in ("current", "match_group", "gmid", "L", "vds_estimate", "bw_factor"):
+                for key in ("current", "match_group", "gmid", "L", "vds_estimate"):
                     if old.get(key) not in (None, ""):
                         row[key] = old[key]
-                row.setdefault("bw_factor", 1.0)
                 merged.append(row)
             self.devices = merged
             self.warnings = warnings
