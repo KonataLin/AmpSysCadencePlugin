@@ -1,17 +1,72 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_ROOT="${1:-/opt/AmpSysCadencePlugin}"
-ENGINE_ROOT="${2:-$PLUGIN_ROOT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REQUESTED_ROOT="${1:-${AMPSYS_INSTALL_ROOT:-/opt/AmpSysCadencePlugin}}"
+ENGINE_ROOT_ARG="${2:-}"
 CDSINIT="${3:-$HOME/.cdsinit}"
 
-mkdir -p "$(dirname "$PLUGIN_ROOT")" "$(dirname "$ENGINE_ROOT")" "$HOME/bin"
+warn() { printf '[AmpSys][WARN] %s\n' "$*" >&2; }
+die() { printf '[AmpSys][ERROR] %s\n' "$*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ "$SCRIPT_DIR" != "$PLUGIN_ROOT" ]]; then
-  mkdir -p "$PLUGIN_ROOT"
-  cp -a "$SCRIPT_DIR/." "$PLUGIN_ROOT/"
+abs_path() {
+  local p="$1"
+  mkdir -p "$(dirname "$p")" 2>/dev/null || true
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$p"
+  else
+    python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$p"
+  fi
+}
+
+can_write_target() {
+  local target="$1"
+  local probe="$target"
+  while [[ ! -e "$probe" && "$probe" != "/" ]]; do
+    probe="$(dirname "$probe")"
+  done
+  [[ -w "$probe" ]]
+}
+
+PLUGIN_ROOT="$(abs_path "$REQUESTED_ROOT")"
+if ! can_write_target "$PLUGIN_ROOT"; then
+  if [[ "${1:-}" != "" ]]; then
+    die "Cannot write to $PLUGIN_ROOT. Run with sudo for this target, or choose a user-writable path, e.g. bash install_linux.sh \"\$HOME/.local/share/AmpSysCadencePlugin\""
+  fi
+  PLUGIN_ROOT="$(abs_path "${XDG_DATA_HOME:-$HOME/.local/share}/AmpSysCadencePlugin")"
+  warn "Default /opt install is not writable; using user install: $PLUGIN_ROOT"
 fi
+
+ENGINE_ROOT="${ENGINE_ROOT_ARG:-$PLUGIN_ROOT}"
+ENGINE_ROOT="$(abs_path "$ENGINE_ROOT")"
+
+mkdir -p "$PLUGIN_ROOT" "$ENGINE_ROOT" "$HOME/bin"
+
+copy_payload() {
+  local src="$1"
+  local dst="$2"
+  if [[ "$src" == "$dst" ]]; then
+    return 0
+  fi
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a \
+      --exclude='.git/' \
+      --exclude='workspace/' \
+      --exclude='*.log' \
+      --exclude='__pycache__/' \
+      "$src/" "$dst/"
+  else
+    (cd "$src" && tar \
+      --exclude='./.git' \
+      --exclude='./workspace' \
+      --exclude='*.log' \
+      --exclude='__pycache__' \
+      -cf - .) | (cd "$dst" && tar -xf -)
+  fi
+}
+
+copy_payload "$SCRIPT_DIR" "$PLUGIN_ROOT"
 
 LINUX_CORE_ARCHIVE="$PLUGIN_ROOT/core/linux_x86_64.tar.gz"
 LINUX_CORE_DIR="$PLUGIN_ROOT/core/linux_x86_64"
@@ -27,12 +82,11 @@ for candidate in \
   "$LINUX_CORE_DIR/ampsys_core"; do
   if [[ -f "$candidate" ]]; then
     CORE_BIN="$candidate"
+    chmod +x "$CORE_BIN" || true
     break
   fi
 done
-if [[ -f "$CORE_BIN" ]]; then
-  chmod +x "$CORE_BIN" || true
-fi
+
 GUI_EXE=""
 for candidate in \
   "$PLUGIN_ROOT/gui/linux_x86_64/ampsys_gui/ampsys_gui" \
@@ -43,14 +97,11 @@ for candidate in \
     break
   fi
 done
+
 for path in "$PLUGIN_ROOT/cli" "$PLUGIN_ROOT/skill" "$PLUGIN_ROOT/tools" "$PLUGIN_ROOT/assets" "$PLUGIN_ROOT/core"; do
-  if [[ -e "$path" ]]; then
-    chmod -R a+rX "$path" || true
-  fi
+  [[ -e "$path" ]] && chmod -R a+rX "$path" || true
 done
-if [[ -n "$GUI_EXE" ]]; then
-  chmod -R a+rX "$PLUGIN_ROOT/gui" || true
-fi
+[[ -n "$GUI_EXE" && -d "$PLUGIN_ROOT/gui" ]] && chmod -R a+rX "$PLUGIN_ROOT/gui" || true
 chmod a+rx "$PLUGIN_ROOT" || true
 mkdir -p "$PLUGIN_ROOT/workspace"
 chmod -R a+rwX "$PLUGIN_ROOT/workspace" || true
@@ -124,17 +175,44 @@ exit 127
 SHIM
 chmod +x "$PY_SHIM"
 
+write_launcher() {
+  local path="$1"
+  local body="$2"
+  printf '%s\n' "$body" > "$path"
+  chmod +x "$path"
+}
+
+write_launcher "$HOME/bin/ampsys-runner" "#!/usr/bin/env bash
+export AMPSYS_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export AMPSYS_ENGINE_ROOT=\"$ENGINE_ROOT\"
+exec \"$PY_SHIM\" -3 \"$PLUGIN_ROOT/cli/ampsys_runner.py\" \"\$@\""
+
+if [[ -n "$GUI_EXE" ]]; then
+  write_launcher "$HOME/bin/ampsys-gui" "#!/usr/bin/env bash
+export AMPSYS_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export AMPSYS_ENGINE_ROOT=\"$ENGINE_ROOT\"
+export AMPSYS_GUI_EXE=\"$GUI_EXE\"
+exec \"$GUI_EXE\" \"\$@\""
+else
+  write_launcher "$HOME/bin/ampsys-gui" "#!/usr/bin/env bash
+export AMPSYS_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export AMPSYS_ENGINE_ROOT=\"$ENGINE_ROOT\"
+exec \"$PY_SHIM\" -3 \"$PLUGIN_ROOT/gui/ampsys_gui.py\" \"\$@\""
+fi
+
+write_launcher "$HOME/bin/ampsys-check" "#!/usr/bin/env bash
+export AMPSYS_PLUGIN_ROOT=\"$PLUGIN_ROOT\"
+export AMPSYS_ENGINE_ROOT=\"$ENGINE_ROOT\"
+exec \"$PY_SHIM\" -3 \"$PLUGIN_ROOT/tools/check_environment.py\" \"\$@\""
+
 export AMPSYS_PLUGIN_ROOT="$PLUGIN_ROOT"
 export AMPSYS_ENGINE_ROOT="$ENGINE_ROOT"
 export AMPSYS_PYCMD="$PY_SHIM -3"
-if [[ -n "$GUI_EXE" ]]; then
-  export AMPSYS_GUI_EXE="$GUI_EXE"
-fi
-if [[ -n "$INSTALL_PYTHON" ]]; then
-  export AMPSYS_PYTHON3="$INSTALL_PYTHON"
-fi
+[[ -n "$GUI_EXE" ]] && export AMPSYS_GUI_EXE="$GUI_EXE"
+[[ -n "$INSTALL_PYTHON" ]] && export AMPSYS_PYTHON3="$INSTALL_PYTHON"
 export PATH="$HOME/bin:$PATH"
 
+touch "$CDSINIT"
 if ! grep -q "ampsys_init.il" "$CDSINIT" 2>/dev/null; then
   cat >> "$CDSINIT" <<'CDS'
 
@@ -163,12 +241,8 @@ fi
 bashrc_set_export "AMPSYS_PLUGIN_ROOT" "$PLUGIN_ROOT"
 bashrc_set_export "AMPSYS_ENGINE_ROOT" "$ENGINE_ROOT"
 bashrc_set_export "AMPSYS_PYCMD" "$PY_SHIM -3"
-if [[ -n "$GUI_EXE" ]]; then
-  bashrc_set_export "AMPSYS_GUI_EXE" "$GUI_EXE"
-fi
-if [[ -n "$INSTALL_PYTHON" ]]; then
-  bashrc_set_export "AMPSYS_PYTHON3" "$INSTALL_PYTHON"
-fi
+[[ -n "$GUI_EXE" ]] && bashrc_set_export "AMPSYS_GUI_EXE" "$GUI_EXE"
+[[ -n "$INSTALL_PYTHON" ]] && bashrc_set_export "AMPSYS_PYTHON3" "$INSTALL_PYTHON"
 if ! grep -q 'HOME/bin' "$BASHRC" 2>/dev/null; then
   printf 'export PATH="$HOME/bin:$PATH"\n' >> "$BASHRC"
 fi
@@ -179,11 +253,12 @@ echo "  Engine: $ENGINE_ROOT"
 echo "  .cdsinit: $CDSINIT"
 echo "  Workspace: $PLUGIN_ROOT/workspace"
 echo "  Python command in Cadence: $PY_SHIM -3"
-if [[ -n "$GUI_EXE" ]]; then
-  echo "  Standalone GUI: $GUI_EXE"
+echo "  CLI: $HOME/bin/ampsys-runner"
+echo "  GUI: $HOME/bin/ampsys-gui"
+echo "  Environment check: $HOME/bin/ampsys-check"
+if [[ -n "$CORE_BIN" ]]; then
+  echo "  Core: $CORE_BIN"
 else
-  echo "  Standalone GUI: not found; Cadence will fall back to $PY_SHIM -3"
+  warn "Linux core binary was not found; release package may be incomplete for this architecture."
 fi
-echo "  Environment check: $PY_SHIM -3 $PLUGIN_ROOT/tools/check_environment.py"
 echo "  Current shell refresh: source ~/.bashrc"
-echo "  Or temporary PATH: export PATH=\"\$HOME/bin:\$PATH\""
