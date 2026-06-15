@@ -1,6 +1,6 @@
 {
   "name": "AmpSysCadencePlugin",
-  "built_at": "2026-06-15 00:17:39",
+  "built_at": "2026-06-15 08:52:13",
   "method": "cython-private+pyinstaller-onefile",
   "platform": "multi",
   "builder_python": "windows_amd64_py312 + linux_x86_64_py310",
@@ -24,6 +24,6 @@
     "For stronger commercial anti-tamper, run a VMProtect/Themida-style protector with --protector-cmd.",
     "Windows core was rebuilt on Windows Python 3.12.",
     "Linux core was rebuilt inside IC617 glibc 2.17 / Python 3.10 for wider Linux compatibility.",
-    "Release tiny Spectre LUT was validated on SMIC180MMRF in IC617."
+    "Release tiny Spectre LUT + optimize was validated on SMIC180MMRF, SMIC40LL, TSMC40RF, and SMIC28HKCPlus."
   ]
 }
