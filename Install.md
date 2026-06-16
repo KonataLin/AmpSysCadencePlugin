@@ -1,9 +1,34 @@
-# AmpSys Cadence Plugin 安装说明
+# Install
 
-安装和使用流程已合并到 `Usage.md`。
+Linux / WSL only.
 
-请直接阅读：
+## 1. Extract
 
-```text
-Usage.md
+```bash
+unzip AmpSysCadencePlugin_release.zip -d ~/AmpSysCadencePlugin_release
+cd ~/AmpSysCadencePlugin_release
 ```
+
+## 2. Install
+
+```bash
+sudo bash install_linux.sh /opt/AmpSysCadencePlugin
+source ~/.bashrc
+```
+
+## 3. Start Cadence
+
+Run Virtuoso from your design workspace:
+
+```bash
+cd ~/Desktop/SDADC
+virtuoso &
+```
+
+Open a schematic and use the `AmpSys` menu.
+
+## Notes
+
+- Select the PDK model file manually in the GUI.
+- Spectre can be selected manually or found with AutoSearch.
+- The plugin does not include any PDK files or simulators.
