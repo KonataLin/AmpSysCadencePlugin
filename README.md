@@ -37,38 +37,6 @@
 
 AmpSys Cadence Plugin 把 **Virtuoso schematic 抽取**、**Python GUI 配置**、**AmpSys protected core 优化**、**SKILL 尺寸写回** 串成一个可重复的闭环。典型工作流是：用 Windows/HSPICE 或 Linux/WSL Spectre 建 LUT，Linux/Virtuoso 侧使用 fast LUT 优化并写回器件尺寸。
 
-```mermaid
-flowchart LR
-  A["Windows HSPICE<br/>或 Linux/WSL Spectre 建 LUT"] --> B["LUT cache<br/>nmos/pmos pkl"]
-  B --> C["Linux / Virtuoso<br/>打开 schematic"]
-  C --> D["AmpSys 菜单<br/>Extract Current Schematic"]
-  D --> E["GUI<br/>电流、spec、权重"]
-  E --> F["Protected Core<br/>LUT fast optimize"]
-  F --> G["SKILL<br/>写回 W / L / fingers"]
-```
-
-## 当前状态
-
-| 项目 | 状态 |
-| --- | --- |
-| 最新测试版 | `v0.1.0-alpha.3` |
-| 已实测 PDK | SMIC18MMRF / SMIC 180nm RF |
-| 已实测链路 | Linux Virtuoso 抽取、GUI 优化、CDF 写回 |
-| Windows 用途 | GUI、HSPICE LUT 建表、环境检查 |
-| Linux 用途 | Virtuoso 集成、fast LUT 优化、Spectre 建 LUT、SKILL 写回 |
-
-## 亮点
-
-| 能力 | 说明 |
-| --- | --- |
-| 从 schematic 进入优化 | 在 Virtuoso 菜单中抽取当前打开的 schematic，无需手写 netlist |
-| HSPICE/Spectre 建表 | 支持 Windows HSPICE 建 LUT，也支持 Linux/WSL Cadence Spectre 建 LUT |
-| 可视化 GUI | LUT、器件电流、spec、权重、收敛过程和结果在一个流程页里完成 |
-| Spectre AutoSearch / APS | PDK model 由用户手动选择；Spectre 可执行文件可一键搜索；默认 `+aps` 加速，失败自动回退普通 Spectre |
-| CDF 写回 | 支持 `W / L / fingers / m` 等常见 CDF 参数别名，SMIC18MMRF 已验证 `Total Width + Finger Width` 写回 |
-| 详细日志 | GUI、SKILL、runner、optimization、telemetry 都会落盘，方便定位环境问题 |
-| 核心保护 | GUI/SKILL/wrapper 公开，AmpSys 内部算法以 protected binary 发布 |
-
 ## 平台支持
 
 | 平台 | 状态 | 用途 |
@@ -99,6 +67,39 @@ README.md               项目主页
 
 > 直接 `git clone` 得到的是公开 wrapper 和工程文件，不包含可发布的 protected core。最终用户请优先使用 Release zip。
 
+## Linux / WSL 安装
+
+完整说明见 [INSTALL.md](INSTALL.md)。常用安装流程如下：
+
+```bash
+unzip AmpSysCadencePlugin_release.zip -d ~/AmpSysCadencePlugin_release
+cd ~/AmpSysCadencePlugin_release
+sudo bash install_linux.sh /opt/AmpSysCadencePlugin
+source ~/.bashrc
+```
+
+在 Cadence 工程目录启动 Virtuoso：
+
+```bash
+cd ~/Desktop/SDADC
+virtuoso &
+```
+
+`install_linux.sh` 支持 3 个位置参数：
+
+```bash
+bash install_linux.sh [install_root] [engine_root] [cdsinit_path]
+```
+
+- `install_root`：插件安装目录，默认 `/opt/AmpSysCadencePlugin`；没有 `/opt` 写权限且未显式传参时，会自动使用 `$HOME/.local/share/AmpSysCadencePlugin`。
+- `engine_root`：核心引擎目录，默认等于 `install_root`，通常留空。
+- `cdsinit_path`：Cadence 启动脚本，默认 `$HOME/.cdsinit`，不存在会自动创建。
+
+Python 要求 `>= 3.8`。如果未来系统 `python3` 指向 Python 3.13/3.14，也可以正常使用；如果只有 `python3.13` 命令而没有 `python3` 软链接，可用：
+
+```bash
+AMPSYS_PYTHON3=/usr/bin/python3.13 bash install_linux.sh /opt/AmpSysCadencePlugin
+```
 ## 快速开始
 
 Windows 安装：
